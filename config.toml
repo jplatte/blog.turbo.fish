@@ -12,6 +12,9 @@ highlight_theme = "visual-studio-dark"
 # Whether to build a search index to be used later on by a JavaScript library
 build_search_index = false
 
+# Generate RSS feed
+generate_rss = true
+
 [extra]
 about = """
 I am the creator of the web­site [turbo.fish][]. You may also know me
