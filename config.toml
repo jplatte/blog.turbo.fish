@@ -1,26 +1,21 @@
-# The URL the site will be built for
+title = "blog.turbo.fish"
 base_url = "https://blog.turbo.fish"
+description = "Jonas Platte's personal blog"
 
-# Whether to automatically compile all Sass files in the sass directory
-compile_sass = false
-
-# Whether to do syntax highlighting
-# Theme can be customised by setting the `highlight_theme` variable to a theme supported by Zola
+generate_rss = true
 highlight_code = true
 highlight_theme = "visual-studio-dark"
 
-# Whether to build a search index to be used later on by a JavaScript library
+compile_sass = false
 build_search_index = false
-
-# Generate RSS feed
-generate_rss = true
 
 [extra]
 about = """
-I am the creator of the web­site [turbo.fish][]. You may also know me
+I am the creator of [turbo.fish][] and [caniuse.rs][]. You may also know me
 because of my involvement with the [ruma][] project.
 
 [turbo.fish]: https://turbo.fish/
+[caniuse.rs]: https://caniuse.rs/
 [ruma]: https://www.ruma.io/
 """
 
