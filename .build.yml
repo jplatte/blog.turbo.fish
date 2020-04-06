@@ -6,8 +6,9 @@ secrets:
   - 3d68c1a1-174a-49be-b03b-af1a5d4bbd99
 tasks:
   - get_zola: |
-      archive='zola-v0.9.0-x86_64-unknown-linux-gnu.tar.gz'
-      wget "https://github.com/getzola/zola/releases/download/v0.9.0/$archive"
+      version='v0.10.1'
+      archive="zola-${version}-x86_64-unknown-linux-gnu.tar.gz"
+      wget "https://github.com/getzola/zola/releases/download/${version}/${archive}"
       tar xf "$archive"
   - build: |
       PATH="$PATH:$PWD"
