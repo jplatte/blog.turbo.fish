@@ -1,14 +1,11 @@
 image: archlinux
-packages:
-  - rust
-  - wget
 secrets:
   - 3d68c1a1-174a-49be-b03b-af1a5d4bbd99
 tasks:
   - get_zola: |
       version='v0.10.1'
       archive="zola-${version}-x86_64-unknown-linux-gnu.tar.gz"
-      wget "https://github.com/getzola/zola/releases/download/${version}/${archive}"
+      curl -L "https://github.com/getzola/zola/releases/download/${version}/${archive}" -o "$archive"
       tar xf "$archive"
   - build: |
       PATH="$PATH:$PWD"
