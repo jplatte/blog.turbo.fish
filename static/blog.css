@@ -148,6 +148,16 @@ h2 a {
     text-decoration: none;
 }
 
+blockquote {
+    margin-left: 0;
+    padding-left: 1em;
+    border-left: solid .2em #666;
+}
+
+figcaption {
+    font-size: 77.5%;
+}
+
 /* First footnote ::before */
 p + .footnote-definition::before {
     content: 'Footnotes';
