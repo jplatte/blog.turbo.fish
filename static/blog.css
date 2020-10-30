@@ -97,6 +97,7 @@ h2, h3, h4 {
 .content {
     position: relative;
     line-height: 1.4;
+    flex: 1;
     padding: .5em 2em 1.5em;
     background: rgba(29, 29, 29, 0.9);
     overflow-x: hidden;
