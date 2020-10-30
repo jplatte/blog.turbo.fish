@@ -1,7 +1,6 @@
 +++
-title = "Advanced Cargo `[features]` Usage"
+title = "Advanced Cargo [features] Usage"
 date = 2020-10-24
-draft = true
 +++
 
 Last year, [in my Rust 2020 blog post][rust-2020], I asked for Cargo crate
@@ -11,6 +10,8 @@ of issues has happened. Unfortunately, the new feature resolve is still
 Nightly-only, and it still doesn't fix all of my gripes with Cargo `[features]`.
 Recently, I discovered some tricks to work around some of these gripes, so I
 thought I should share them here!
+
+[rust-2020]: https://blog.turbo.fish/rust-2020/
 
 ## Reusing the name of an optional dependency for a feature
 
@@ -77,7 +78,7 @@ small_crate = "0.1.0" # Added during the refactoring
 
 Then add a `serde` feature:
 
-```
+```toml
 [features]
 serde = [
     "serde_cr", # Enable the serde dependency...
