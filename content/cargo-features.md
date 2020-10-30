@@ -97,7 +97,7 @@ That's it. Onto the next trick!
 ## Activating a dependency if a combination of features is active
 
 <small>
-    Or activating a feature if a combination of other features is active
+    or activating a feature if a combination of other features is active
 </small>
 
 … is unfortunately not possible in the general case. However, there is a
@@ -173,6 +173,10 @@ feat2 = ["my_feature_check/feat2"]
 ```
 
 … and move the `compile_error!` into `my_feature_check`.
+
+*Note: Shortly after publishing this I realized the same thing should be possible
+with a build script rather than a separate crate. I will test this and update
+the article in the coming days.*
 
 [^1]: There is an [unstable feature][ns-features] that changes this.
 
