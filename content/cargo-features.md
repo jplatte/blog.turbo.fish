@@ -15,13 +15,13 @@ thought I should share them here!
 
 ## Reusing the name of an optional dependency for a feature
 
-Sometimes, you have an optional dependency, and would really like to activate
-a feature or another dependency automatically if that dependency is activated –
-exactly like if it was a crate feature. However, you can't just create a feature
-of the same name because that would cause a conflict (dependencies and features
-share the same namespace¹). Adding a feature of a different name and requiring
-your users to activate that would be a breaking change, for something that
-should really be straight-forward. What to do?
+Sometimes, you have an optional dependency, and would like to activate a feature
+or another dependency automatically if that dependency is activated – exactly
+like if it was a crate feature. However, you can't just create a feature of the
+same name because that would cause a conflict (dependencies and features share
+the same namespace[^1]). Adding a feature of a different name and requiring your
+users to activate that would be a breaking change, for something that should
+really be straight-forward. What to do?
 
 To answer that, let me first back up a bit:
 
@@ -36,7 +36,7 @@ my_feature = ["<here>"]
 ```
 
 is done using the name you chose, rather than the original name. This means you
-can reuse the original crate name as the name of a feature[^1]! However, it also
+can reuse the original crate name as the name of a feature! However, it also
 means that you now have to refer to the dependency using a different name in
 your code. Unless…
 
@@ -46,9 +46,9 @@ your code. Unless…
 
 You just rename it back in your crate root! Before renaming was possible in
 `Cargo.toml`, you would do it through `extern crate foo as bar;`. Turns out you
-can do this to just rename it dependency back if it's renamed in `Cargo.toml`.
-In Rust 2018 crates, this will result in both names referring to the same crate,
-but that should not be an issue in practice.
+can do this to just undo a renaming from `Cargo.toml`. In Rust 2018 crates, this
+will result in both names referring to the same crate, but that should not be an
+issue in practice.
 
 To put all this together into a made-up example, let's say you have a crate
 `big_crate` that defines a bunch of types, and has an optional dependency on
