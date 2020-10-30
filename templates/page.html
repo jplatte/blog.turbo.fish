@@ -17,13 +17,13 @@
     {% if page.earlier %}
     <li class="previous-post">
         <small>Previous post</small>
-        <a href="/{{ page.earlier.path }}">{{ page.earlier.title }}</a>
+        <a href="{{ page.earlier.permalink }}">{{ page.earlier.title }}</a>
     </li>
     {% endif %}
     {% if page.later %}
     <li class="next-post">
         <small>Next post</small>
-        <a href="/{{ page.later.path }}">{{ page.later.title }}</a>
+        <a href="{{ page.later.permalink }}">{{ page.later.title }}</a>
     </li>
     {% endif %}
 </ul>
