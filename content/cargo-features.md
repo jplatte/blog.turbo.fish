@@ -135,7 +135,7 @@ backend features that activate the corresponding ones in SQLx.
 Mutually exclusive features are not natively supported in Cargo. Of course it is
 easy to make something not compile with a certain feature set, but more often
 than not, you want to provide a useful error message if a conflicting feature
-set is requested. That part is relatively easy, it takes two lines of code:
+set is requested. This is usually solved through a conditional `compile_error!`:
 
 ```rust
 #[cfg(all(feature = "feat1", feature = "feat2"))]
@@ -153,38 +153,32 @@ by using `#[cfg(all(feature = "feat1", not(feature = "feat2")))]` rather than
 just `#[cfg(feature = "feat1")]` on the first definition of an item that has
 different definitions for the two features. Of course, this quickly becomes a
 burden if there is a non-trivial amount of feature-gated code, so I am here to
-offer an alternative: Move that compile error into its own crate[^3].
+offer an alternative: Move the feature set check into a [build script][]:
 
-It might seem weird to have a crate whose sole purpose is to emit a compiler
-error if a certain set of its features is activated, but this actually neatly
-solves the problem: By depending on a crate that contains the feature checks,
-you make sure that they run before any of the code in your own crate is
-compiled. Just forward all of your own features to this crate, like this:
+```rust
+use std::{env, process};
 
-```toml
-[dependencies]
-# implementation detail of your crate – should be versioned in lockstep and
-# always be used with an exact version requirement.
-my_feature_check = "=0.7.2"
+fn main() {
+    let feat1_active = env::var_os("CARGO_FEATURE_FEAT1").is_some();
+    let feat2_active = env::var_os("CARGO_FEATURE_FEAT2").is_some();
 
-[features]
-feat1 = ["my_feature_check/feat1"]
-feat2 = ["my_feature_check/feat2"]
+    if feat1_active && feat2_active {
+        eprintln!("error: The f1 and f2 features can't be activated at the same time.");
+        process::exit(1);
+    }
+}
 ```
 
-… and move the `compile_error!` into `my_feature_check`.
+*Note: An earlier version of this post advocated using `compile_error!`, but in
+a separate crate that the main crate forwards all its features to. That also
+works, but is more work and as far as I know has no advantages over the build
+script approach that I came up with shortly after.*
 
-*Note: Shortly after publishing this I realized the same thing should be possible
-with a build script rather than a separate crate. I will test this and update
-the article in the coming days.*
+[build script]: https://doc.rust-lang.org/cargo/reference/build-scripts.html
 
 [^1]: There is an [unstable feature][ns-features] that changes this.
 
 [^2]: This is only true for some kinds of errors, but enough of them for this to
 be a problem more often than not.
-
-[^3]: There are other alternatives that work without a separate crate, but this
-is the only one I know of that doesn't degrade readability of the actual crate
-or IDE functionalities.
 
 [ns-features]: https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#namespaced-features
