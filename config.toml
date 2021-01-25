@@ -2,7 +2,9 @@ title = "blog.turbo.fish"
 base_url = "https://blog.turbo.fish"
 description = "Jonas Platte's personal blog"
 
-generate_rss = true
+generate_feed = true
+feed_filename = "rss.xml"
+
 compile_sass = false
 build_search_index = false
 
