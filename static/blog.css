@@ -254,6 +254,18 @@ ul.ext-links {
     font-size: 90%;
 }
 
+.rss {
+    font-size: 90%;
+}
+
+.rss svg {
+    margin-right: .25em;
+}
+
+.rss svg path {
+    fill: #fff;
+}
+
 .sidebar-footer {
     margin-top: auto;
 }
