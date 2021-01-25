@@ -3,7 +3,7 @@ secrets:
   - 3d68c1a1-174a-49be-b03b-af1a5d4bbd99
 tasks:
   - get_zola: |
-      version='v0.12.2'
+      version='v0.13.0'
       archive="zola-${version}-x86_64-unknown-linux-gnu.tar.gz"
       curl -L "https://github.com/getzola/zola/releases/download/${version}/${archive}" -o "$archive"
       tar xf "$archive"

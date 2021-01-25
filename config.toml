@@ -3,11 +3,12 @@ base_url = "https://blog.turbo.fish"
 description = "Jonas Platte's personal blog"
 
 generate_rss = true
-highlight_code = true
-highlight_theme = "visual-studio-dark"
-
 compile_sass = false
 build_search_index = false
+
+[markdown]
+highlight_code = true
+highlight_theme = "visual-studio-dark"
 
 [extra]
 about = """
