@@ -35,11 +35,6 @@ a_text = "jplatte"
 a_href = "https://github.com/jplatte"
 
 [[extra.external_links]]
-title = "twitch"
-a_text = "jplatte"
-a_href = "https://www.twitch.tv/jplatte"
-
-[[extra.external_links]]
 title = "liberapay"
 a_text = "jplatte"
 a_href = "https://liberapay.com/jplatte/"
