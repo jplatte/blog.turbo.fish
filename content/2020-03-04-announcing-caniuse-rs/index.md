@@ -1,6 +1,5 @@
 +++
 title = "Announcing caniuse.rs"
-date = 2020-03-04
 +++
 Hello, dear reader! Today, I am excited to announce
 

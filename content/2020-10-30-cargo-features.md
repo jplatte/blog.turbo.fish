@@ -1,6 +1,5 @@
 +++
 title = "Advanced Cargo [features] Usage"
-date = 2020-10-30
 +++
 
 Last year, [in my Rust 2020 blog post][rust-2020], I asked for Cargo crate

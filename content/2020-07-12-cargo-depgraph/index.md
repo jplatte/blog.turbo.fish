@@ -1,6 +1,5 @@
 +++
 title = "Something something cargo-depgraph"
-date = 2020-07-12
 draft = true
 +++
 
