@@ -26,8 +26,8 @@ one (function-like and derive macros) or two (attribute macros)
 
 > You can sort of think of procedural macros as functions from an AST to another
 > AST.
-
-— [The Rust Reference][ref]
+>
+> — [The Rust Reference][ref]
 
 They must be public (`pub fn ...`) and live in a crate of the type `proc-macro`.
 When using Cargo (and who doesn't?) this crate type is declared
@@ -54,11 +54,35 @@ All of the following articles are going to be about proc-macros that parse their
 input with [syn] and produce their output with [quote]. These are not mandatory
 for proc-macros, but they are used by the vast majority of them.
 
+syn focuses on parsing Rust code into its own [AST], but also has (optional)
+support for parsing custom syntax, which can be very useful when parsing
+attributes, function-like macro input or custom syntax embedded into Rust syntax
+(most commonly when writing attribute macros).
+
+quote has a tiny API surface of which one item sees the vast majority of `use`s:
+`quote!`. `quote!` is a function-like macro that turns its input into a
+`proc_macro2::TokenStream` while substituting placeholders.  
+If you have read or written a `macro_rules!` macro before, I'll already let you
+know this: `quote! { #(#key: #value),* }` is the proc-macro equivalent to
+`$($key: $value),*)`.
+If you haven't, don't mind the symbol soup above: We'll get to that in the next
+article.
+
+<small>
+
+You might be wondering about the `2` in `proc_macro2` above. It's not a typo,
+syn and quote hardly interact with the types from the `proc_macro` crate
+directly, instead using the wrapper crate [proc-macro2]. This crate only exists
+because the builtin crate is limited to procedural macro compilation contexts.
+For more details, see the linked documentation.
+
+</small>
+
 [proc_macro]: https://doc.rust-lang.org/proc_macro/
 [syn]: https://docs.rs/syn/1.0
 [quote]: https://docs.rs/quote/1.0
-
-*proc_macro, proc_macro2, syn, quote*
+[proc-macro2]: https://docs.rs/proc-macro2/1.0
+[AST]: https://en.wikipedia.org/wiki/Abstract_syntax_tree
 
 ## Derive macros vs. other procedural macros
 
