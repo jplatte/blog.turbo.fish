@@ -84,10 +84,24 @@ For more details, see the linked documentation.
 [proc-macro2]: https://docs.rs/proc-macro2/1.0
 [AST]: https://en.wikipedia.org/wiki/Abstract_syntax_tree
 
-## Derive macros vs. other procedural macros
+## Derive macros vs. attribute macros
 
-*derives add code, other macros rewrite code*
+One important difference between derive macros and attribute macros that I only
+learned about rather late myself is that derive macros generate code that is
+then *added* to the same module, while attribute macros generate code that
+*replaces* the item they were applied on.
+
+This makes a lot of sense when you consider the use cases for each: derive
+macros are only really meant to add `impl` blocks and nothing else. For
+attribute macros this is much less clear, for example one might want to create
+an attribute macro that introduces a new control-flow operator. Clearly the
+code can only compile successfully if that kind of thing is stripped as part of
+macro expansion, which also brings me to...
 
 ## A note on macro expansion
+
+I have seen people from time to time being surprised or sometimes confused about
+what macros, proc-macros in particular, are capable of but also what they're
+*not* capable of.
 
 *all macros, including procedural ones, run before type checking or resolution!*
