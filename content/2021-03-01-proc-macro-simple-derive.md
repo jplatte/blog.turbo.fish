@@ -45,7 +45,57 @@ impl NewsFeed {
 }
 ```
 
+To make it easy to play around with the code in the next sections, I've created
+a git repository that will contain all of the examples from this blog series
+eventually. No need to go there now if you plan to continue reading; there will
+be a link to the commits for the changes from this article at the end.
+
+If you just want to read code without explanations though, here is the link you
+need: <https://github.com/jplatte/proc-macro-blog-examples>
+
 [basics]: /proc-macro-basics/
+
+## Getting started
+
+First off, we need to create the proc-macro crate that is going to contain our
+derive macro. We'll name it `getters` and create it using
+
+```sh
+cargo init --lib getters
+```
+
+Then we add
+
+```toml
+[lib]
+proc-macro = true
+```
+
+to its `Cargo.toml` and add dependencies on `proc-macro2`, `syn` and `quote`.
+
+<small>
+
+You can do this on the command line with [cargo-edit]:
+`cargo add proc-macro2 syn quote`
+
+</small>
+
+As mentioned in the first article, derive macros are simply functions with the
+`#[proc_macro_derive(Name)]` attribute, so we add
+
+```rust
+use proc_macro::TokenStream;
+
+#[proc_macro_derive(Getters)]
+pub fn getters(input: TokenStream) -> TokenStream {
+    TokenStream::new()
+}
+```
+
+to `lib.rs`. This derive macro can now already be used! It just doesn't do
+anything yet.
+
+[cargo-edit]: https://crates.io/crates/cargo-edit
 
 ## Parsing the input
 
