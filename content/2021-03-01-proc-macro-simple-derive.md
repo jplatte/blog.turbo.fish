@@ -1,5 +1,5 @@
 +++
-title = "Procedural Macros: Walkthrough of a simple derive macro"
+title = "Procedural Macros: A simple derive macro"
 template = "page-lumeo.html"
 draft = true
 +++
@@ -8,10 +8,10 @@ This is the second article in my series on procedural macros. If you don't know
 what procedural macros are, I highly recommend reading
 [the previous article][basics] first.
 
-As the title says, this will be a walkthrough (detailed explanation) of a simple
-derive macro: `Getters`. `#[derive(Getters)]` will generate an accessor function
-for every named field of its input struct (it will report an error when used on
-other kinds of types). So
+This will be a walkthrough (detailed explanation) of a simple derive macro:
+`Getters`. `#[derive(Getters)]` will generate an accessor function for every
+named field of its input struct (it will report an error when used on other
+kinds of types). So
 
 ```rust
 #[derive(Getters)]
@@ -99,12 +99,73 @@ anything yet.
 
 ## Parsing the input
 
-*declare macro that parses input, outputs empty token stream*
+Most procedural macros start with an invocation of `syn::parse_macro_input!()`.
+We will do the same thing here[^1]:
 
-*panic on non-structs*
-*note how errors should often have an explicit span, but not here*
+```rust
+use syn::{parse_macro_input, DeriveInput};
 
-*panic on structs w/o named fields*
+let input = parse_macro_input!(input as DeriveInput);
+```
+
+This will get us an instance of `DeriveInput`, or report an error back to the
+compiler if parsing the `TokenStream` as a `DeriveInput` fails[^2].
+
+All further inspection of the input as well as the generation of the output is
+usually done in a sub-module rather than in `lib.rs`, and uses the types from
+`proc_macro2` instead of `proc_macro`:
+
+```rust
+// lib.rs
+mod getters;
+use getters::expand_getters;
+
+// getters.rs
+use proc_macro2::TokenStream;
+use syn::DeriveInput;
+
+pub fn expand_getters(input: DeriveInput) -> TokenStream {
+    TokenStream::new()
+}
+```
+
+Since this is a different `TokenStream` type, we need to add an extra conversion
+when using `expand_getters` from the procedural macro function. Here is the
+entire, updated definition:
+
+```rust
+#[proc_macro_derive(Getters)]
+pub fn getters(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_getters(input).into()
+}
+```
+
+Now before we go to generate output, we need a way of accessing the fields of
+our input struct, if it is a struct with named fields. Of course `DeriveInput`
+can also contain an enum, unit struct or tuple struct. Figuring out what's
+inside is a simple manner of `match`ing:
+
+```rust
+use syn::{Data, DataStruct, Fields};
+
+let fields = match input.data {
+    Data::Struct(DataStruct { fields: Fields::Named(fields), .. }) => fields,
+    _ => panic!("this derive macro only works on structs with named fields"),
+};
+```
+
+Here, we `panic!()` if the input is not what we expect it to be. Very often,
+panicking in procedural macros is not a good idea since it will generate a
+compiler error pointing at the usage of the derive macro, rather than pointing
+at relevant parts of the macro input. However, in this case there isn't really
+a more specific error location than the macro itself. If the input is an `enum`,
+we could point at the `enum` token itself, but it seems questionable whether
+that would be much better.
+
+If you want to learn about the other fields of `DeriveInput` and `DataStruct`,
+the other variants of `Data` and `Fields` and such, you can find all that in
+[syn's documentation](https://docs.rs/syn/1.0).
 
 ## Generating some output
 
@@ -144,3 +205,7 @@ let (impl_generics, ty_generics, where_clause) = st.generics.split_for_impl();
 ## Next up
 
 *come back to panic and note that next post discusses error handling*
+
+[^1]: Instead of `let input = parse_macro_input!(input as DeriveInput);`, we could also have written `let input: DeriveInput = parse_macro_input!(input);`. This still seems less common, so I went with the former.
+
+[^2]: A derive macro's input failing to parse as `syn::DeriveInput` is highly unlikely, but possible: Either simply because of a bug in syn, or because the version of syn that's being used is too old to be aware of newer syntax features.
