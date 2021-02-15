@@ -104,4 +104,21 @@ I have seen people from time to time being surprised or sometimes confused about
 what macros, proc-macros in particular, are capable of but also what they're
 *not* capable of.
 
-*all macros, including procedural ones, run before type checking or resolution!*
+Macros have input and output tokens, but can't talk to the compiler beyond that
+simple interface. They can't know anything about the outer scope of the source
+code in which they were invoked; they can't know where names referenced in their
+input are coming from.
+
+One real-world case where I've seen this be a problem (or maybe more of an
+annoyance) is [thiserror]. It implements the `Error` trait's unstable¹
+`backtrace()` method to return whichever field has a type named `Backtrace`,
+if any. If you want to capture backtraces on stable using the [backtrace]
+crate and also use the `thiserror::Error` derive macro for your error type,
+you have to rename the `Backtrace` type at the import site, or you get
+stability errors because thiserror tries to implement an unstable method for
+you.
+
+[thiserror]: https://docs.rs/thiserror/1.0
+[backtrace]: https://docs.rs/backtrace/0.3
+
+[^1] at the time of writing
