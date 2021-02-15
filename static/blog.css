@@ -165,6 +165,10 @@ blockquote {
     border-left: solid .2em #666;
 }
 
+blockquote p {
+    margin: .7em 0;
+}
+
 figcaption {
     font-size: 77.5%;
 }
