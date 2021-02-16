@@ -168,9 +168,45 @@ the other variants of `Data` and `Fields` and such, you can find all that in
 
 ## Generating some output
 
-*make sure to include `#[automatically_derived]`*
+To generate output, we will use the `quote` crates `quote!` macro.
+
+```rust
+use quote::quote;
+```
+
+It is usually invoked with curly braces. Inside, you can write arbitary Rust
+code, which won't be compiled as part of the proc-macro itself, but instead is
+returned as a `TokenStream`. That is, we want to replace the
+`TokenStream::new()` at the end of `expand_getters`:
+
+```diff
+-TokenStream::new()
++quote! {
++    impl NewsFeed {}
++}
+```
+
+This will work for our first example, but of course we want to use the name of
+whatever struct our derive was used on. This is where some of the extra symbol
+soup from the previous article comes in: interpolation. `quote!` can interpolate
+the values of local variables into the output. You tell it to do that by
+prefixing an identifier with a hash sign (`#`):
+
+```rust
+let st_name = input.ident;
+
+quote! {
+    // It's a good practice to use this attribute on macro-generated impl blocks.
+    #[automatically_derived]
+    impl #st_name {}
+}
+```
 
 *Touch on hygiene, peer dependencies*
+
+## If something goes wrong
+
+*mention cargo-expand*
 
 ## Working with generic types
 
