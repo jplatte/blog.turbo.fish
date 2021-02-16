@@ -164,6 +164,26 @@ figcaption {
     font-size: 77.5%;
 }
 
+.info {
+    margin: 0 -1em;
+    padding: .3em 1em;
+    background-color: #252525;
+    border: 1px solid #333;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    font-size: 95%;
+}
+
+.info::before {
+    content: 'ℹ';
+    display: block;
+    margin-top: .3em;
+    margin-left: .15em;
+}
+
+.info p {
+    margin: .5em 0;
+}
+
 /* First footnote ::before */
 p + .footnote-definition::before {
     content: 'Footnotes';
