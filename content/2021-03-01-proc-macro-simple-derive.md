@@ -1,6 +1,5 @@
 +++
 title = "Procedural Macros: A simple derive macro"
-template = "page-lumeo.html"
 draft = true
 +++
 

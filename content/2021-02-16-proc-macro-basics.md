@@ -1,6 +1,5 @@
 +++
 title = "Procedural Macros: The Basics"
-template = "page-lumeo.html"
 draft = true
 +++
 
