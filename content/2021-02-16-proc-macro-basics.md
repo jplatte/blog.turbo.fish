@@ -120,4 +120,9 @@ you.
 [thiserror]: https://docs.rs/thiserror/1.0
 [backtrace]: https://docs.rs/backtrace/0.3
 
+## Next up
+
+The next article is going to explain how to implement a basic derive macro.
+Stay tuned!
+
 [^1] at the time of writing
