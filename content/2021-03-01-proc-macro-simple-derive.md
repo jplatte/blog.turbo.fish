@@ -149,7 +149,7 @@ inside is a simple manner of `match`ing:
 use syn::{Data, DataStruct, Fields};
 
 let fields = match input.data {
-    Data::Struct(DataStruct { fields: Fields::Named(fields), .. }) => fields,
+    Data::Struct(DataStruct { fields: Fields::Named(fields), .. }) => fields.named,
     _ => panic!("this derive macro only works on structs with named fields"),
 };
 ```
