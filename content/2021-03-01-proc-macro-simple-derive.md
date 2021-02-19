@@ -237,9 +237,13 @@ can just let `syn` do all of the heavy lifting:
 let (impl_generics, ty_generics, where_clause) = st.generics.split_for_impl();
 ```
 
-## Next up
+*todo*
 
-*come back to panic and note that next post discusses error handling*
+## Conclusion
+
+*link to commit range*
+
+Next up, *come back to panic and note that next post discusses error handling*
 
 [^1]: Instead of `let input = parse_macro_input!(input as DeriveInput);`, we could also have written `let input: DeriveInput = parse_macro_input!(input);`. This still seems less common, so I went with the former.
 
