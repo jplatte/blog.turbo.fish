@@ -305,15 +305,15 @@ Let's consider what our current logic will generate for:
 
 ```rust
 #[derive(Getters)]
-struct BorrowedNewsFeed<'a> {
+struct NewsFeedRef<'a> {
     name: &'a str,
     url: &'a str,
     category: Option<&'a str>,
 }
 ```
 
-It will generate `impl BorrowedNewsFeed { ... }`! That won't work, since we're
-not allowed to elide the lifetime in impl blocks, and even if we were could, our
+It will generate `impl NewsFeedRef { ... }`! That won't work, since we're not
+allowed to elide the lifetime in impl blocks, and even if we were could, our
 generated methods would mention the lifetime `'a` in their return types. Clearly
 we need to introduce the type's generic parameters for the generated `impl` too.
 
@@ -343,9 +343,20 @@ return types.
 
 ## Conclusion
 
-*link to commit range*
+At this point, you should have an understanding of how to create a simple
+procedural macro! You can look at the macro crate I showed in small bits above
+in its entirety [here][complete-macro] or review the changes from each section
+separately by going through the [corresponding commits][article-commits].
 
-Next up, *come back to panic and note that next post discusses error handling*
+There are still many things that I haven't covered though. The most important
+one in my opinion is error handling, specifically having errors reported as
+originating from a part of the input; that's what I'll be explaining in the next
+article. You will have to wait a little bit longer for that one, since I had a
+head start for this one (I had written parts already when publishing the first
+article), which is not the case for the next one.
+
+[complete-macro]: https://github.com/jplatte/proc-macro-blog-examples/tree/simple-derive-v1/derive_getters
+[article-commits]: https://github.com/jplatte/proc-macro-blog-examples/compare/init...simple-derive-v1
 
 ## Appendix
 
@@ -356,7 +367,7 @@ footnotes, so I created this section instead.
 ### A. Interpolation repetition
 
 As mentioned above, interpolation repetition is a lot more powerful than simply
-expanding an iterator of . Here is an example:
+expanding an iterator. Here is an example:
 
 ```rust
 quote! {
@@ -379,11 +390,128 @@ interpolation, for example the supported types.
 
 ### B. Improving the accessors' return types
 
-Since what the macro does so far is still almost trivial, I wanted to show a
-small thing that makes it a tiny bit more sophisticated: Output type
-customization for the generated getters.
+Since what the macro does so far is still very basic, I wanted to show a small
+thing that makes it a tiny bit more sophisticated: Customizing the output type
+for the generated getters.
 
-*todo*
+The first very simple "specialization" that I touched on with the
+`NewsFeedRef` example is references. These can be detected reliably:
+
+```rust
+use syn::{Type, TypeReference};
+
+let getters = fields.into_iter().map(|f| {
+    let field_name = f.ident;
+    let return_ty = match f.ty {
+        // shared references can simply by copied
+        Type::Reference(r @ TypeReference { mutability: None, .. }) => quote! { #r },
+        // fallback to adding a reference
+        ty => quote! { &#ty },
+    };
+
+    quote! {
+        pub fn #field_name(&self) -> #return_ty {
+            &self.#field_name
+        }
+    }
+});
+```
+
+And due to auto-deref, we don't even need to adjust the function body. This is
+more luck than anything though, and we'll need to adjust the function body too
+if we want to add more specializations, for example for `Option<_>` and
+`String`:
+
+```rust
+use syn::{Path, TypePath};
+
+let (return_ty, body) = match f.ty {
+    Type::Reference(r @ TypeReference { mutability: None, .. }) => {
+        (quote! { #r }, quote! { self.#field_name })
+    }
+    Type::Path(TypePath { path, .. }) if path.is_ident("String") => {
+        (quote! { &::core::primitive::str }, quote! { &self.#field_name })
+    }
+    Type::Path(ty @ TypePath { .. }) => match option_inner_type(&ty.path) {
+        // Option<String> => Option<&str> (.as_deref())
+        Some(Type::Path(TypePath { path, .. })) if path.is_ident("String") => (
+            quote! { ::std::option::Option<&::core::primitive::str> },
+            quote! { self.#field_name.as_deref() },
+        ),
+        // Option<T> => Option<&T> (.as_ref())
+        Some(inner_ty) => (
+            quote! { ::std::option::Option<&#inner_ty> },
+            quote! { self.#field_name.as_ref() },
+        ),
+        None => (quote! { &#ty }, quote! { &self.#field_name }),
+    },
+    ty => (quote! { &#ty }, quote! { &self.#field_name }),
+};
+
+quote! {
+    pub fn #field_name(&self) -> #return_ty {
+        #body
+    }
+}
+```
+
+with the helper function `option_inner_type` being defined as
+
+```rust
+use syn::{GenericArgument, PathArguments};
+
+fn option_inner_type(path: &Path) -> Option<&Type> {
+    if path.leading_colon.is_some() {
+        return None;
+    }
+
+    if path.segments.len() != 1 || path.segments[0].ident != "Option" {
+        return None;
+    }
+
+    let ab = match &path.segments[0].arguments {
+        PathArguments::AngleBracketed(ab) => ab,
+        _ => return None,
+    };
+
+    if ab.args.len() != 1 {
+        return None;
+    }
+
+    match &ab.args[0] {
+        GenericArgument::Type(t) => Some(t),
+        _ => None,
+    }
+}
+```
+
+As you can see, things can get more complicated quickly even though we barely
+special-cased any types, and maybe you also noticed that we're currently only
+applying the special cases to `String`s and `Option`s that are referred to as
+exactly that (i.e., qualifying `Option` as `std::option::Option` will bypass the
+special case).
+
+<div class="info">
+
+Note that, as mentioned [last time], it is impossible to apply these kinds of
+special cases correctly under all circumstances. Users could always shadow
+`std`s `Option` or `String` types, or even things like `bool` / `str` / `u8`.
+
+When you want to explicitly use one of the `std` / `core` types, you can do so
+with absolute paths, but knowing what type names from the input resolve to is
+simple impossible.
+
+</div>
+
+I hope this extended example was a good showcase for what to expect from reading
+or writing real-world proc-macro code. In the end it's still all regular Rust
+code that inspects a few data structures with the only "magic" being inside
+`quote!`.
+
+The full code after these changes can be found [here][simple-derive-ext].
+
+[last time]: ../proc-macro-basics/#a-note-on-macro-expansion
+[simple-derive-ext]: https://github.com/jplatte/proc-macro-blog-examples/tree/simple-derive-ext-v1/derive_getters
 
 [^1]: Instead of `let input = parse_macro_input!(input as DeriveInput);`, we could also have written `let input: DeriveInput = parse_macro_input!(input);`. This still seems less common, so I went with the former.
 
