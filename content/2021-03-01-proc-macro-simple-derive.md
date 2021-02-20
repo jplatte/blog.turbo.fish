@@ -18,7 +18,6 @@ struct NewsFeed {
     name: String,
     url: String,
     category: Option<String>,
-    tags: Vec<String>,
 }
 ```
 
@@ -26,20 +25,16 @@ will generate
 
 ```rust
 impl NewsFeed {
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &String {
         &self.name
     }
 
-    pub fn url(&self) -> &str {
+    pub fn url(&self) -> &String {
         &self.url
     }
 
-    pub fn category(&self) -> Option<&str> {
-        self.category.as_deref()
-    }
-
-    pub fn tags(&self) -> &[String] {
-        &self.tags
+    pub fn category(&self) -> &Option<String> {
+        &self.category
     }
 }
 ```
@@ -202,11 +197,103 @@ quote! {
 }
 ```
 
-*Touch on hygiene, peer dependencies*
+So far so good, but that `impl` block should actually contain some methods.
+Remember that we already extracted the named fields of the input into a local
+variable named `fields` earlier? This fields has the type
+`syn::punctuated::Punctuated<syn::Field, syn::token::Comma>`, more commonly
+written `Punctuated<Field, Token![,]>` (the `Token` macro is also part of syn).
+Really all we need from that right now is an iterator of the actual `Field`s to
+be able to generate some code for each of them, and of course `Punctuated`
+implements `IntoIterator` so we can do this:
+
+```rust
+let getters = fields.into_iter().map(|f| {
+    // Remember: Interpolation only works for variables, not arbitrary expressions.
+    // That's why we need to move these fields into local variables first
+    // (borrowing would also work though).
+    let field_name = f.ident;
+    let field_ty = f.ty;
+
+    quote! {
+        pub fn #field_name(&self) -> &#field_ty {
+            &self.#field_name
+        }
+    }
+});
+```
+
+Which is interpolated into the output slightly differently:
+
+```rust
+#[automatically_derived]
+impl #st_name {
+    #(#getters)*
+}
+```
+
+The reason we have to enclose `#getters` in `#()*` is that it's not a single
+thing: It's an iterator. `#()*` tells `quote!` to interpolate the inner tokens
+once per item in all interpolated iterators. In this very simple case, we could
+also have called `.collect::<TokenStream>()` on the iterator first and
+interpolated the result as just `#getters`, but this repetition syntax is a lot
+more powerful than that (see [Appendix A](#a-interpolation-repetition)).
 
 ## If something goes wrong
 
-*mention cargo-expand*
+We now have a working proc-macro! But what if we had made a mistake in our
+generated code? Imagine forgetting the `#` in `&self.#field_name` of the
+generated getter methods. Then all getter methods would try to access a field
+named literally `field_name`, and we would get errors to that. And they'd point
+at where our derive macro was invoked:
+
+```
+error[E0609]: no field `field_name` on type `&NewsFeed`
+ --> getters/tests/news_feed.rs:3:10
+  |
+3 | #[derive(Getters)]
+  |          ^^^^^^^ unknown field
+  |
+  = note: available fields are: `name`, `url`, `category`
+  = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)
+```
+
+That's… Not very helpful. And while we might be able to figure things out in
+this case, imagine your macro code being 500 lines of code, rather than the
+current 34. Clearly, we need a way of seeing the generated code. This is where
+[cargo-expand] comes in. You invoke it like any cargo command that invoked the
+compiler (e.g. `check` or `build`), but additionally can specify a module path
+to filter out of the output, similar to the last argument of `cargo test`:
+
+* `cargo expand foo::bar` – show the generated code for the module `foo::bar`
+* `cargo expand --test news_feed` – show the generated code for the `news_feed`
+  test
+
+In the case of the forgotten `#`, expanding the news feed test case from the
+beginning will make the problem very clear (comments are mine, of course):
+
+```rust
+// Some things you will always see in the output of `cargo expand`.
+// Usually you can just remove these if you want to compile the expanded output
+// separately to find an issue in a large body of generated code.
+#![feature(prelude_import)]
+#[prelude_import]
+use std::prelude::v1::*;
+#[macro_use]
+extern crate std;
+// What you wrote, with macros expanded:
+use getters::Getters;
+// Omitted: Definition of NewsFeed
+#[automatically_derived]
+impl NewsFeed {
+    pub fn name(&self) -> &String {
+        &self.field_name
+    }
+    // Omitted: Other getters
+}
+// Omitted: Generated main function (because this is a test module)
+```
+
+[cargo-expand]: https://github.com/dtolnay/cargo-expand#readme
 
 ## Working with generic types
 
@@ -239,11 +326,51 @@ let (impl_generics, ty_generics, where_clause) = st.generics.split_for_impl();
 
 *todo*
 
+*link to appendix b*
+
 ## Conclusion
 
 *link to commit range*
 
 Next up, *come back to panic and note that next post discusses error handling*
+
+## Appendix
+
+I want to show some things that are not crucial to the article, and if included
+above would make the main article a rather long read. They're also too long for
+footnotes, so I created this section instead.
+
+### A. Interpolation repetition
+
+As mentioned above, interpolation repetition is a lot more powerful than simply
+expanding an iterator of . Here is an example:
+
+```rust
+quote! {
+    struct #name {
+        #(pub #fields: #tys),*
+    }
+}
+```
+
+`fields` and `tys` are both iterators or lists here and will be iterated in
+lockstep to produce a list of struct fields, separated with commas (that is,
+there won't be a comma after the last field generated by the interpolation,
+which would be there if the comma was inside the parentheses).
+
+There is also a short section on interpolation
+[in `quote!`s documentation][quote-docs] if you want to learn more about
+interpolation, for example the supported types.
+
+[quote-docs]: https://docs.rs/quote/1.0/quote/macro.quote.html#interpolation
+
+### B. Some customization
+
+Since what the macro does so far is still almost trivial, I wanted to show a
+small thing that makes it a tiny bit more sophisticated: Output type
+customization for the generated getters.
+
+*todo*
 
 [^1]: Instead of `let input = parse_macro_input!(input as DeriveInput);`, we could also have written `let input: DeriveInput = parse_macro_input!(input);`. This still seems less common, so I went with the former.
 
