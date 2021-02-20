@@ -132,6 +132,7 @@ pre {
 
 pre, .bg {
     font-family: 'Droid Sans Mono', monospace;
+    font-size: 13pt;
 }
 
 a {
