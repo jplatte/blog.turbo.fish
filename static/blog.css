@@ -185,6 +185,10 @@ figcaption {
     margin: .5em 0;
 }
 
+.info pre {
+    background-color: #202020 !important;
+}
+
 /* First footnote ::before */
 p + .footnote-definition::before {
     content: 'Footnotes';

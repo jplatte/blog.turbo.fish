@@ -1,16 +1,14 @@
 +++
 title = "Procedural Macros: A simple derive macro"
-draft = true
 +++
 
 This is the second article in my series on procedural macros. If you don't know
 what procedural macros are, I highly recommend reading
 [the previous article][basics] first.
 
-This will be a walkthrough (detailed explanation) of a simple derive macro:
-`Getters`. `#[derive(Getters)]` will generate an accessor function for every
-named field of its input struct (it will report an error when used on other
-kinds of types). So
+This article will go through a simple derive macro: `Getters`.
+`#[derive(Getters)]` will generate an accessor function for every named field of
+its input struct (it will report an error when used on other kinds of types). So
 
 ```rust
 #[derive(Getters)]
@@ -67,12 +65,15 @@ proc-macro = true
 
 to its `Cargo.toml` and add dependencies on `proc-macro2`, `syn` and `quote`.
 
-<small>
+<div class="info">
 
-You can do this on the command line with [cargo-edit]:
-`cargo add proc-macro2 syn quote`
+You can add dependencies on the command line with [cargo-edit]:
 
-</small>
+```sh
+cargo add proc-macro2 syn quote
+```
+
+</div>
 
 As mentioned in the first article, derive macros are simply functions with the
 `#[proc_macro_derive(Name)]` attribute, so we add
@@ -125,7 +126,7 @@ pub fn expand_getters(input: DeriveInput) -> TokenStream {
 
 Since this is a different `TokenStream` type, we need to add an extra conversion
 when using `expand_getters` from the procedural macro function. Here is the
-entire, updated definition:
+updated definition:
 
 ```rust
 #[proc_macro_derive(Getters)]
@@ -157,13 +158,17 @@ a more specific error location than the macro itself. If the input is an `enum`,
 we could point at the `enum` token itself, but it seems questionable whether
 that would be much better.
 
+<div class="info">
+
 If you want to learn about the other fields of `DeriveInput` and `DataStruct`,
 the other variants of `Data` and `Fields` and such, you can find all that in
 [syn's documentation](https://docs.rs/syn/1.0).
 
+</div>
+
 ## Generating some output
 
-To generate output, we will use the `quote` crates `quote!` macro.
+To generate output, we will use the `quote` crate's `quote!` macro.
 
 ```rust
 use quote::quote;
@@ -171,8 +176,8 @@ use quote::quote;
 
 It is usually invoked with curly braces. Inside, you can write arbitary Rust
 code, which won't be compiled as part of the proc-macro itself, but instead is
-returned as a `TokenStream`. That is, we want to replace the
-`TokenStream::new()` at the end of `expand_getters`:
+returned as a `TokenStream`. We use it to replace the `TokenStream::new()` at
+the end of `expand_getters`:
 
 ```diff
 -TokenStream::new()
@@ -198,17 +203,17 @@ quote! {
 ```
 
 So far so good, but that `impl` block should actually contain some methods.
-Remember that we already extracted the named fields of the input into a local
-variable named `fields` earlier? This fields has the type
+We extracted the named fields of the input into a local variable already, now
+how do we do something useful with it? This fields has the type
 `syn::punctuated::Punctuated<syn::Field, syn::token::Comma>`, more commonly
-written `Punctuated<Field, Token![,]>` (the `Token` macro is also part of syn).
-Really all we need from that right now is an iterator of the actual `Field`s to
-be able to generate some code for each of them, and of course `Punctuated`
-implements `IntoIterator` so we can do this:
+written `Punctuated<Field, Token![,]>`. Really all we need from that right now
+is an iterator of the actual `Field`s to be able to generate some code for each
+of them, and of course `Punctuated` implements `IntoIterator`, which means we
+can do this:
 
 ```rust
 let getters = fields.into_iter().map(|f| {
-    // Remember: Interpolation only works for variables, not arbitrary expressions.
+    // Interpolation only works for variables, not arbitrary expressions.
     // That's why we need to move these fields into local variables first
     // (borrowing would also work though).
     let field_name = f.ident;
@@ -222,7 +227,7 @@ let getters = fields.into_iter().map(|f| {
 });
 ```
 
-Which is interpolated into the output slightly differently:
+The `getters` are interpolated into the output in a slightly different way:
 
 ```rust
 #[automatically_derived]
@@ -233,10 +238,16 @@ impl #st_name {
 
 The reason we have to enclose `#getters` in `#()*` is that it's not a single
 thing: It's an iterator. `#()*` tells `quote!` to interpolate the inner tokens
-once per item in all interpolated iterators. In this very simple case, we could
-also have called `.collect::<TokenStream>()` on the iterator first and
-interpolated the result as just `#getters`, but this repetition syntax is a lot
-more powerful than that (see [Appendix A]).
+once per item in all interpolated iterators.
+
+<div class="info">
+
+In this very simple case, we could have called `.collect::<TokenStream>()` on
+the iterator and interpolated the result without `#()*`, but repetitions are
+actually more general than that so it's good to know them. See [Appendix A] for
+more about interpolations.
+
+</div>
 
 [Appendix A]: #a-interpolation-repetition
 
@@ -244,9 +255,10 @@ more powerful than that (see [Appendix A]).
 
 We now have a working proc-macro! But what if we had made a mistake in our
 generated code? Imagine forgetting the `#` in `&self.#field_name` of the
-generated getter methods. Then all getter methods would try to access a field
-named literally `field_name`, and we would get errors to that. And they'd point
-at where our derive macro was invoked:
+generated getter methods. Now all getter methods try to access a field named
+literally `field_name`, which will for most invocations generate errors about
+that field not existing. Since the problem is in generated code, they point at
+the derive macro invocation:
 
 ```
 error[E0609]: no field `field_name` on type `&NewsFeed`
@@ -259,12 +271,12 @@ error[E0609]: no field `field_name` on type `&NewsFeed`
   = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)
 ```
 
-That's… Not very helpful. And while we might be able to figure things out in
-this case, imagine your macro code being 500 lines of code, rather than the
-current 34. Clearly, we need a way of seeing the generated code. This is where
-[cargo-expand] comes in. You invoke it like any cargo command that invoked the
-compiler (e.g. `check` or `build`), but additionally can specify a module path
-to filter out of the output, similar to the last argument of `cargo test`:
+That's not very helpful. And while we might be able to figure things out in this
+case, imagine your macro code being 500 lines of code or more. Clearly, we need
+a way of seeing the generated code. This is where [cargo-expand] comes in. You
+invoke it like any cargo command that runs the compiler (e.g. `check` or
+`build`), and you can additionally specify a module path to filter out of the
+output, similar to the last argument of `cargo test`:
 
 * `cargo expand foo::bar` – show the generated code for the module `foo::bar`
 * `cargo expand --test news_feed` – show the generated code for the `news_feed`
@@ -315,11 +327,12 @@ struct NewsFeedRef<'a> {
 It will generate `impl NewsFeedRef { ... }`! That won't work, since we're not
 allowed to elide the lifetime in impl blocks, and even if we were could, our
 generated methods would mention the lifetime `'a` in their return types. Clearly
-we need to introduce the type's generic parameters for the generated `impl` too.
+we need to introduce the type's generic parameters for the generated `impl`
+block too.
 
 You may assume that handling generics correctly will be a lot of work, and it
-can certainly be depending on the macro. However, for basic ones like ours we
-can just let `syn` do all of the heavy lifting:
+can certainly be for some macros. However, for basic ones like ours we can just
+let `syn` do all of the heavy lifting:
 
 ```rust
 let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -344,25 +357,21 @@ return types.
 ## Conclusion
 
 At this point, you should have an understanding of how to create a simple
-procedural macro! You can look at the macro crate I showed in small bits above
-in its entirety [here][complete-macro] or review the changes from each section
+derive macro! You can look at the macro crate built in this article in its
+entirety [here][complete-macro], or review the changes from each section
 separately by going through the [corresponding commits][article-commits].
 
-There are still many things that I haven't covered though. The most important
-one in my opinion is error handling, specifically having errors reported as
-originating from a part of the input; that's what I'll be explaining in the next
-article. You will have to wait a little bit longer for that one, since I had a
-head start for this one (I had written parts already when publishing the first
-article), which is not the case for the next one.
+There are still many things that I haven't covered of course. The most important
+one in my opinion is error handling, specifically reporting errors as
+originating from part of the input; that's what the next article is going to be
+about. You will have to wait a bit longer for that one, since I had a head start
+for this one (I had written parts already when publishing the first article),
+which is not the case for the next one.
 
 [complete-macro]: https://github.com/jplatte/proc-macro-blog-examples/tree/simple-derive-v1/derive_getters
 [article-commits]: https://github.com/jplatte/proc-macro-blog-examples/compare/init...simple-derive-v1
 
 ## Appendix
-
-I want to show some things that are not crucial to the article, and if included
-above would make the main article a rather long read. They're also too long for
-footnotes, so I created this section instead.
 
 ### A. Interpolation repetition
 
@@ -391,11 +400,11 @@ interpolation, for example the supported types.
 ### B. Improving the accessors' return types
 
 Since what the macro does so far is still very basic, I wanted to show a small
-thing that makes it a tiny bit more sophisticated: Customizing the output type
-for the generated getters.
+thing that makes it somewhat more sophisticated: Customizing the output types
+for the generated methods.
 
 The first very simple "specialization" that I touched on with the
-`NewsFeedRef` example is references. These can be detected reliably:
+`NewsFeedRef` example is references. These can be checked for easily:
 
 ```rust
 use syn::{Type, TypeReference};
@@ -418,8 +427,8 @@ let getters = fields.into_iter().map(|f| {
 ```
 
 And due to auto-deref, we don't even need to adjust the function body. This is
-more luck than anything though, and we'll need to adjust the function body too
-if we want to add more specializations, for example for `Option<_>` and
+more luck than anything else though, and we'll need to adjust the function body
+too if we want to add more specializations, for example for `Option<_>` and
 `String`:
 
 ```rust
@@ -485,7 +494,7 @@ fn option_inner_type(path: &Path) -> Option<&Type> {
 }
 ```
 
-As you can see, things can get more complicated quickly even though we barely
+As you can see, things can get more complex quickly even though we barely
 special-cased any types, and maybe you also noticed that we're currently only
 applying the special cases to `String`s and `Option`s that are referred to as
 exactly that (i.e., qualifying `Option` as `std::option::Option` will bypass the
@@ -495,11 +504,11 @@ special case).
 
 Note that, as mentioned [last time], it is impossible to apply these kinds of
 special cases correctly under all circumstances. Users could always shadow
-`std`s `Option` or `String` types, or even things like `bool` / `str` / `u8`.
+`std`s `Option` or `String` types, or even builtin types like `u8`.
 
 When you want to explicitly use one of the `std` / `core` types, you can do so
 with absolute paths, but knowing what type names from the input resolve to is
-simple impossible.
+simply impossible.
 
 </div>
 
