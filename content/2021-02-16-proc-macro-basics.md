@@ -123,6 +123,6 @@ you.
 ## Next up
 
 The next article is going to explain how to implement a basic derive macro.
-Stay tuned!
+You can find it at the 'Next post' link below.
 
 [^1] at the time of writing
