@@ -52,10 +52,10 @@ need: <https://github.com/jplatte/proc-macro-blog-examples>
 ## Getting started
 
 First off, we need to create the proc-macro crate that is going to contain our
-derive macro. We'll name it `getters` and create it using
+derive macro. We'll name it `derive_getters` and create it using
 
 ```sh
-cargo init --lib getters
+cargo init --lib derive_getters
 ```
 
 Then we add
@@ -236,7 +236,9 @@ thing: It's an iterator. `#()*` tells `quote!` to interpolate the inner tokens
 once per item in all interpolated iterators. In this very simple case, we could
 also have called `.collect::<TokenStream>()` on the iterator first and
 interpolated the result as just `#getters`, but this repetition syntax is a lot
-more powerful than that (see [Appendix A](#a-interpolation-repetition)).
+more powerful than that (see [Appendix A]).
+
+[Appendix A]: #a-interpolation-repetition
 
 ## If something goes wrong
 
@@ -307,7 +309,6 @@ struct BorrowedNewsFeed<'a> {
     name: &'a str,
     url: &'a str,
     category: Option<&'a str>,
-    tags: Vec<&'a str>,
 }
 ```
 
@@ -321,12 +322,24 @@ can certainly be depending on the macro. However, for basic ones like ours we
 can just let `syn` do all of the heavy lifting:
 
 ```rust
-let (impl_generics, ty_generics, where_clause) = st.generics.split_for_impl();
+let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+quote! {
+    #[automatically_derived]
+    impl #impl_generics #st_name #ty_generics #where_clause {
+        #(#getters)
+    }
+}
 ```
 
-*todo*
+And that's it! Our derive now works on generic types, including ones with type
+or const generics and complex where clauses. There's one thing this example
+makes even clearer than the previous ones though: Simply prepending a `&` to a
+field's type is not a very good solution to finding an appropriate get method
+return type. See [Appendix B] for a look at how we could improve the accessors'
+return types.
 
-*link to appendix b*
+[Appendix B]: #b-improving-the-accessors-return-types
 
 ## Conclusion
 
@@ -364,7 +377,7 @@ interpolation, for example the supported types.
 
 [quote-docs]: https://docs.rs/quote/1.0/quote/macro.quote.html#interpolation
 
-### B. Some customization
+### B. Improving the accessors' return types
 
 Since what the macro does so far is still almost trivial, I wanted to show a
 small thing that makes it a tiny bit more sophisticated: Output type
