@@ -519,7 +519,7 @@ code that inspects a few data structures with the only "magic" being inside
 
 The full code after these changes can be found [here][simple-derive-ext].
 
-[last time]: ../proc-macro-basics/#a-note-on-macro-expansion
+[last time]: /proc-macro-basics/#a-note-on-macro-expansion
 [simple-derive-ext]: https://github.com/jplatte/proc-macro-blog-examples/tree/simple-derive-ext-v1/derive_getters
 
 [^1]: Instead of `let input = parse_macro_input!(input as DeriveInput);`, we could also have written `let input: DeriveInput = parse_macro_input!(input);`. This still seems less common, so I went with the former.
