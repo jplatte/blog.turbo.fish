@@ -57,7 +57,13 @@ pub fn getters(input: TokenStream) -> TokenStream {
 
 ## Parsing the attribute
 
-*since custom parsing deserves its own article*
+Since custom parsing is a large enough topic to deserve its own article, we're
+going to start off using `Attribute::parse_meta` to parse the attribute, which
+creates a `syn::Meta` that can capture common attribute usage:
+
+```rust
+// TODO
+```
 
 *use `.parse_meta()`*
 
