@@ -57,38 +57,72 @@ pub fn getters(input: TokenStream) -> TokenStream {
 
 ## Parsing the attribute
 
-Since custom parsing is a large enough topic to deserve its own article, we're
-going to start off using `Attribute::parse_meta` to parse the attribute, which
-creates a `syn::Meta` that can capture common attribute usage:
+Since custom parsing is complex enough to deserve its own article, I'm going to
+use `syn::Attribute::parse_meta` here, which is sufficient for the syntax shown
+above.
 
 ```rust
-// TODO
+// note: syn::Ident is a re-export from
+use syn::{Attribute, Ident, Meta, NestedMeta};
+
+fn parse_name(attr: Attribute) -> syn::Result<Option<String>> {
+    // TODO
+}
 ```
-
-*use `.parse_meta()`*
-
-*use Ident::new with correct input span and note how it already provides good error msg for non-ident string*
-
-<div class="info">
-
-*note that we could have used `format_ident!` too*
-
-</div>
-
-*todo!("error case")*
-
-## The error case
-
-And now to what you've all been waiting for: The error case. But we can't fill
-in that `todo!()` just yet. First, we have to do some refactorings.
-
-*update expand_getters to return syn::Result*
 
 <div class="info">
 
 *note that syn::Result is a type alias*
 
 </div>
+
+## Adjusting the generated code
+
+```rust
+let getters = fields
+    .into_iter()
+    .map(|f| {
+        let attrs: Vec<_> =
+            f.attrs.iter().filter(|attr| attr.path.is_ident("getter")).collect();
+
+        let name_from_attr = match attrs.len() {
+            0 => None,
+            1 => get_name_attr(&attrs[0])?,
+            _ => {
+                let mut error =
+                    syn::Error::new_spanned(&attrs[1], "redundant `getter(name)` attribute");
+                error.combine(syn::Error::new_spanned(&attrs[0], "note: first one here"));
+                return Err(error);
+            }
+        };
+
+        // if there is no `getter(name)` attribute use the field name like before
+        let method_name =
+            name_from_attr.unwrap_or_else(|| f.ident.clone().expect("a named field"));
+        let field_name = f.ident;
+        let field_ty = f.ty;
+
+        Ok(quote! {
+            pub fn #method_name(&self) -> &#field_ty {
+                &self.#field_name
+            }
+        })
+    })
+    .collect::<syn::Result<TokenStream>>()?;
+```
+
+For this to work, we also need to wrap the return type of `expand_getters` in
+`syn::Result` and update the final expression in the function body:
+
+```rust
+pub fn expand_getters(input: DeriveInput) -> syn::Result<TokenStream> {
+    // ...
+
+    Ok(quote! {
+        // ...
+    })
+}
+```
 
 *update proc-macro entry-point*
 
