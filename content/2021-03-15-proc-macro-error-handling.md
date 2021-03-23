@@ -72,11 +72,14 @@ fn parse_name(attr: Attribute) -> syn::Result<Option<String>> {
 
 <div class="info">
 
-*note that syn::Result is a type alias*
+Like many other crates, `syn` exports a `Result` type that is an alias for
+`std::result::Result` with a fixed error type, in this case `syn::Error`.
 
 </div>
 
 ## Adjusting the generated code
+
+*TODO*
 
 ```rust
 let getters = fields
