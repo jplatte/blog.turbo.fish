@@ -62,24 +62,66 @@ use `syn::Attribute::parse_meta` here, which is sufficient for the syntax shown
 above.
 
 ```rust
-// note: syn::Ident is a re-export from
-use syn::{Attribute, Ident, Meta, NestedMeta};
+// note: syn::Ident is a re-export of proc_macro2::Ident
+use syn::{Attribute, Ident};
 
-fn parse_name(attr: Attribute) -> syn::Result<Option<String>> {
-    // TODO
+fn get_name_attr(attr: &Attribute) -> syn::Result<Option<Ident>> {
+    let meta = attr.parse_meta()?;
+    todo!()
 }
 ```
 
-<div class="info">
+There it is, our first usage of `syn::Result`! *TODO*
 
-Like many other crates, `syn` exports a `Result` type that is an alias for
-`std::result::Result` with a fixed error type, in this case `syn::Error`.
+Now let's add more to this function:
 
-</div>
+```rust
+use syn::{Lit, Meta, NestedMeta};
+
+let meta_list = match meta {
+    Meta::List(list) => list,
+    _ => return Err(syn::Error::new_spanned(meta, "expected a list-style attribute")),
+};
+
+let nested = match meta_list.nested.len() {
+    // `#[getter()]` without any arguments is a no-op
+    0 => return Ok(None),
+    1 => &meta_list.nested[0],
+    _ => {
+        return Err(syn::Error::new_spanned(
+            meta_list.nested,
+            "currently only a single getter attribute is supported",
+        ));
+    }
+};
+
+let name_value = match nested {
+    NestedMeta::Meta(Meta::NameValue(nv)) => nv,
+    _ => return Err(syn::Error::new_spanned(nested, "expected `name = \"<value>\"`")),
+};
+
+if !name_value.path.is_ident("name") {
+    return Err(syn::Error::new_spanned(
+        &name_value.path,
+        "unsupported getter attribute, expected `name`",
+    ));
+}
+
+match &name_value.lit {
+    Lit::Str(s) => syn::parse_str(&s.value()).map_err(|e| syn::Error::new_spanned(s, e)),
+    lit => Err(syn::Error::new_spanned(lit, "")),
+}
+```
+
+As you have probably inferred from the usage above, `syn::Result<T>` is a type
+alias for `std::result::Result<T, syn::Error>`. `syn::Error`, at the time of
+writing, is probably the most-used error reporting facility for proc-macros.
 
 ## Adjusting the generated code
 
-*TODO*
+There is one more way the new attribute can be used incorrectly that's unrelated
+to parsing it: It could be given multiple times. The adjusted getter method code
+generation logic handles that.
 
 ```rust
 let getters = fields
@@ -91,9 +133,13 @@ let getters = fields
         let name_from_attr = match attrs.len() {
             0 => None,
             1 => get_name_attr(&attrs[0])?,
+            // since `#[getter(name = ...)]` is the only available `getter` attribute, we can just
+            // assume any attribute with `path.is_ident("getter")` is a `getter(name)` attribute
             _ => {
                 let mut error =
                     syn::Error::new_spanned(&attrs[1], "redundant `getter(name)` attribute");
+                // `syn::Error::combine` can be used to create an error that spans multiple
+                // independent parts of the macro input.
                 error.combine(syn::Error::new_spanned(&attrs[0], "note: first one here"));
                 return Err(error);
             }
@@ -111,8 +157,21 @@ let getters = fields
             }
         })
     })
+    // Since `TokenStream` implements `FromIterator<TokenStream>`, concatenating an iterator of
+    // token streams without a separator can be using `.collect()` in addition to
+    // `quote! { #(#iter)* }`. Through std's `FromIterator` impl for `Result`, we get
+    // short-circuiting on errors on top.
     .collect::<syn::Result<TokenStream>>()?;
 ```
+
+<div class="info">
+
+If this is the first time you have seen `.collect::<Result<_, _>>`, you can find the documentation
+for the trait implementation that makes it possible [here].
+
+[here]: https://doc.rust-lang.org/std/result/enum.Result.html#impl-FromIterator%3CResult%3CA%2C%20E%3E%3E
+
+</div>
 
 For this to work, we also need to wrap the return type of `expand_getters` in
 `syn::Result` and update the final expression in the function body:
