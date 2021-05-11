@@ -363,13 +363,11 @@ separately by going through the [corresponding commits][article-commits].
 
 There are still many things that I haven't covered of course. The most important
 one in my opinion is error handling, specifically reporting errors as
-originating from part of the input; that's what the next article is going to be
-about. You will have to wait a bit longer for that one, since I had a head start
-for this one (I had written parts already when publishing the first article),
-which is not the case for the next one.
+originating from part of the input; that's what the [next article] is about.
 
 [complete-macro]: https://github.com/jplatte/proc-macro-blog-examples/tree/simple-derive-v1/derive_getters
 [article-commits]: https://github.com/jplatte/proc-macro-blog-examples/compare/init...simple-derive-v1
+[next article]: /proc-macro-error-handling/
 
 ## Appendix
 
