@@ -3,23 +3,43 @@ title = "Procedural Macros: Parsing custom syntax"
 draft = true
 +++
 
-This is the fourth article in my series about procedural macros. The examples
-here are based on the ones from [the previous article][prev].
+This is the fourth article in my series about procedural macros. In this
+article, I will explain how you can use `syn` to parse things that are not Rust
+code. It will once again extend the `Getters` derive macro example from the
+previous two articles
 
-In this article, I will explain how you can use `syn` to parse things that are
-not Rust code. This is required for a variety of use cases for proc-macros:
+* [Procedural Macros: A simple derive macro](/proc-macro-simple-derive/) and
+* [Procedural Macros: Error handling](/proc-macro-error-handling/),
 
-* Attributes, either standalone or as part of a derive macro: `syn` only allows
-  a limited syntax for attributes if you don't use custom parsing.
-* Function-like macros: ________
+so it's easier to follow along if you're read them already, but should be
+understandable on its own if you are already somewhat familiar with writing
+proc-macros using `syn` & `quote`.
 
-[prev]: /proc-macro-error-handling/
-
-## ___First heading___
+## Preparation
 
 *syn parsing feature enabled by default, full feature sometimes needed*
 
-*update example from last article to use custom parsing for attributes*
+## The plan
+
+In the last article, we added a custom attribute for our derive macro that uses
+the syntax `#[getter(name = "foo")]`. Now we've decided it should really be
+`#[getter(name = foo)]`, *TODO*
+
+*https://caniuse.rs/features/unrestricted_attribute_tokens*
+
+<div class="info">
+
+Note that custom attributes (either registered by derive macros, or as
+standalone attribute proc-macros) are not the only use case for parsing custom
+syntax. Perhaps more importantly, you can have your own
+<span class="abbrev" title="domain-specific languages">DSLs</span> within
+function-like macros, *TODO*
+
+*https://yew.rs/concepts/html*
+
+</div>
+
+## TODO
 
 *update the syntax from `#[getter(name = "foo")]` to `#[getter(name = foo)]`*
 

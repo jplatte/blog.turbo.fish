@@ -189,6 +189,10 @@ figcaption {
     background-color: #202020 !important;
 }
 
+.abbrev {
+    text-decoration: underline dotted;
+}
+
 /* First footnote ::before */
 p + .footnote-definition::before {
     content: 'Footnotes';
