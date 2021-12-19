@@ -18,8 +18,8 @@ proc-macros using `syn` & `quote`.
 ## The plan
 
 In the last article, we added a custom attribute for our derive macro that uses
-the syntax `#[getter(name = "foo")]`. Now we've decided it should really be
-`#[getter(name = foo)]`, because string literals are lame!
+the syntax `#[getter(name = "foo")]`. But what if we decide it should really be
+`#[getter(name = foo)]`, because why would you have to quote the name?
 
 <div class="info">
 
@@ -34,10 +34,115 @@ function-like macros (or attributes). An advanced example of this is [Yew]'s
 
 </div>
 
-## TODO
+This won't work with `syn`s `Meta` type because it predates [support for
+arbitrary token streams in proc-macro attributes][unrestricted_attribute_tokens]
+in the Rust compiler and arbitrary token streams can't really have a
+representation that is similarily easy to pattern match on. That is why we need
+some parsing code to extract the data we want from the attribute now.
 
-*update the syntax from `#[getter(name = "foo")]` to `#[getter(name = foo)]`*
+[unrestricted_attribute_tokens]: https://blog.rust-lang.org/2019/04/11/Rust-1.34.0.html#custom-attributes-accept-arbitrary-token-streams
 
-*deprecation here or in tips-and-tricks?*
+## `syn` parsing basics
 
-*leave keyword idents to tips-and-tricks?*
+In the previous article when the attribute was added, attribute parsing was a
+single line of code out of >30 lines of attribute handling code:
+
+```rust
+fn get_name_attr(attr: &Attribute) -> syn::Result<Option<Ident>> {
+    // Parsing into `syn::Meta`:
+    let meta = attr.parse_meta()?;
+
+    // Pattern matching and error handling...
+}
+```
+
+When parsing into our own type, we can avoid all of the pattern matching and
+even get some pretty good error handling "for free", but depending on the syntax
+you want to parse, the parsing code can take a little while to get right.
+
+First thing first though: We need a type to parse the `#[getter(name = foo)]`
+attribute into. Since the attribute is not mandatory and other arguments to it
+might reasonably be added in the future, we will make it a struct with an
+*optional* `name` field:
+
+```rust
+struct GetterMeta {
+    name: Option<Ident>,
+}
+```
+
+Luckily when it comes to the parsing code, all we have to parse for now is
+`identifier = identifier`; this is because `syn` already takes care of parsing
+the attribute's name and giving us only the argument list to parse when using
+`Attribute::parse_args`. Here's an illustration from `syn`s
+[documentation for that method][parse_args_docs]:
+
+```
+#[my_attr(value < 5)]
+          ^^^^^^^^^ what gets parsed
+```
+
+[parse_args_docs]: https://docs.rs/syn/latest/syn/struct.Attribute.html#method.parse_args
+
+There is a trait we have to implement to make `GetterMeta` usable with
+`Attribute::parse_args`, and it's called `Parse`:
+
+```rust
+use syn::parse::{Parse, ParseStream};
+
+impl Parse for GetterMeta {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        todo!()
+    }
+}
+```
+
+Now for the actual parsing code... It is so simple you might wonder why you
+would ever bother with `syn::Meta` (spoiler: it's not always this simple).
+
+```rust
+use syn::{Ident, Token};
+
+fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+    // Parse the argument name
+    let arg_name: Ident = input.parse()?;
+    if arg_name != "name" {
+        // Same error as before when encountering an unsupported attribute
+        return Err(syn::Error::new_spanned(
+            arg_name,
+            "unsupported getter attribute, expected `name`",
+        ));
+    }
+
+    // Parse (and discard the span of) the `=` token
+    let _: Token![=] = input.parse()?;
+
+    // Parse the argument value
+    let name = input.parse()?;
+
+    Ok(Self { name })
+}
+```
+
+Now just update the `get_name_attr` implementation:
+
+```rust
+fn get_name_attr(attr: &Attribute) -> syn::Result<Option<Ident>> {
+    let meta: GetterMeta = attr.parse_args()?;
+    Ok(meta.name)
+}
+```
+
+… and parsing of `#[getter(name = foo)]` works!
+
+## Parsing lists
+
+*allow users to rename getters while keeping backwards compatibility*
+
+[syn_punctuated]: https://docs.rs/syn/latest/syn/punctuated/struct.Punctuated.html
+
+## Custom keywords
+
+## Appendix: Deprecating syntax
+
+*re-add support for the literal variation*
