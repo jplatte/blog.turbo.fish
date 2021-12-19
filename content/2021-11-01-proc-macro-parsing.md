@@ -5,8 +5,8 @@ draft = true
 
 This is the fourth article in my series about procedural macros. In this
 article, I will explain how you can use `syn` to parse things that are not Rust
-code. It will once again extend the `Getters` derive macro example from the
-previous two articles
+code. It will once again extend the `Getters` derive macro (which generates get
+methods for a struct's fields) from the previous two articles
 
 * [Procedural Macros: A simple derive macro](/proc-macro-simple-derive/) and
 * [Procedural Macros: Error handling](/proc-macro-error-handling/),
@@ -21,19 +21,6 @@ In the last article, we added a custom attribute for our derive macro that uses
 the syntax `#[getter(name = "foo")]`. But what if we decide it should really be
 `#[getter(name = foo)]`, because why would you have to quote the name?
 
-<div class="info">
-
-Note that custom attributes (either registered by derive macros, or as
-standalone attribute proc-macros) are not the only use case for parsing custom
-syntax. Perhaps more importantly, you can have your own
-<span class="abbrev" title="domain-specific languages">DSLs</span> within
-function-like macros (or attributes). An advanced example of this is [Yew]'s
-[`html!` macro](https://yew.rs/concepts/html).
-
-[Yew]: https://yew.rs/
-
-</div>
-
 This won't work with `syn`s `Meta` type because it predates [support for
 arbitrary token streams in proc-macro attributes][unrestricted_attribute_tokens]
 in the Rust compiler and arbitrary token streams can't really have a
@@ -41,6 +28,18 @@ representation that is similarily easy to pattern match on. That is why we need
 some parsing code to extract the data we want from the attribute now.
 
 [unrestricted_attribute_tokens]: https://blog.rust-lang.org/2019/04/11/Rust-1.34.0.html#custom-attributes-accept-arbitrary-token-streams
+
+<div class="info">
+
+Note that custom attribute arguments are not the only use case for parsing
+custom syntax. Perhaps more importantly, you can have your own
+<span class="abbrev" title="domain-specific languages">DSLs</span> within
+function-like macros (or attributes). An advanced example of this is [Yew]'s
+[`html!` macro](https://yew.rs/concepts/html).
+
+[Yew]: https://yew.rs/
+
+</div>
 
 ## `syn` parsing basics
 
@@ -63,7 +62,7 @@ you want to parse, the parsing code can take a little while to get right.
 First thing first though: We need a type to parse the `#[getter(name = foo)]`
 attribute into. Since the attribute is not mandatory and other arguments to it
 might reasonably be added in the future, we will make it a struct with an
-*optional* `name` field:
+optional `name` field:
 
 ```rust
 struct GetterMeta {
@@ -135,14 +134,115 @@ fn get_name_attr(attr: &Attribute) -> syn::Result<Option<Ident>> {
 
 … and parsing of `#[getter(name = foo)]` works!
 
+<div class="info">
+
+If you are reading this separate from [the previous article][prev_article] and
+need a quick reminder on how this function fits in with the rest of the macro
+code, you can have a look at the full code including the changes from above
+[here][parsing_basics_code].
+
+[parsing_basics_code]: https://github.com/jplatte/proc-macro-blog-examples/tree/8eadec2c3c95f9e2e975aa402653d476ead8c71d/derive_getters
+
+</div>
+
+<!-- FIXME: spacing -->
+
+<div class="info">
+
+If you are interested in a small trick that allows you to change the intended
+syntax of a macro like here in a way that only shows a deprecation warning for
+uses of the previous style rather than breaking those uses, have a look at
+[the appendix](#appendix-deprecating-custom-syntax)
+
+</div>
+
+## Branching
+
+Now that the most basic case is covered, how about something a little more
+complex? Let's say we want to add support for setting the visibility of a
+generated getter function via `#[getter(vis = <visibility>)]`. Of course
+specifying both a custom name and visibility at the same time should be
+supported too, in whatever order the user prefers. That means error handling
+won't be the only kind of branching needed anymore.
+
+```rust
+// Previous possibility:
+#[getter(name = foo)]
+field: Ty,
+
+// New possibilities: (1)
+// Override the visibility of a generated getter
+#[getter(vis = pub(crate))]
+field: Ty,
+
+// New possibilities: (2)
+// Override name and visibility in separate attributes
+#[getter(name = foo)]
+#[getter(vis = pub(crate))]
+field: Ty,
+#[getter(vis = pub(crate))]
+#[getter(name = foo)]
+field: Ty,
+
+// New possibilities: (3)
+// Override name and visibility in a single attribute
+#[getter(name = foo, vis = pub(crate))]
+field: Ty,
+#[getter(vis = pub(crate), name = foo)]
+field: Ty,
+```
+
+The first thing we need to do to support any of these is add another field to
+the `GetterMeta` struct:
+
+```rust
+use syn::Visibility;
+
+struct GetterMeta {
+    name: Option<Ident>,
+    vis: Option<Visibility>,
+}
+```
+
+Adding support for cases (1) and (2) doesn't require any new concepts; here is
+a quick rundown of what the code changes look like:
+
+```rust
+todo!()
+```
+
+Where it gets interesting is case (3):
+
 ## Parsing lists
 
-*allow users to rename getters while keeping backwards compatibility*
+One way of dealing with case (3) would be to write a parsing loop and call
+`input.parse()?` for the list delimiters like for the argument names, `=` tokens
+and argument values. However, personally I prefer to decouple the logic for
+parsing the individual arguments and the logic for reporting conflicts across
+different arguments (since you could also have these errors between multiple
+attributes, rather than multiple arguments in one attribute).
+
+To achieve this, it is helpful to have a representation of a single derive
+argument, let's call it `GetterArgument`:
+
+```rust
+enum GetterArgument {
+    Name(Ident),
+    Vis(Visibility),
+}
+```
+
+*show usage of [`syn::Punctuated`][syn_punctuated]*
 
 [syn_punctuated]: https://docs.rs/syn/latest/syn/punctuated/struct.Punctuated.html
 
 ## Custom keywords
 
-## Appendix: Deprecating syntax
+One more thing I want to showcase before concluding this article is custom
+keywords.
+
+*TODO*
+
+## Appendix: Deprecating custom syntax
 
 *re-add support for the literal variation*
