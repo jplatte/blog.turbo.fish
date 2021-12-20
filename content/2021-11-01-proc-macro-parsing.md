@@ -145,8 +145,6 @@ code, you can have a look at the full code including the changes from above
 
 </div>
 
-<!-- FIXME: spacing -->
-
 <div class="info">
 
 If you are interested in a small trick that allows you to change the intended
