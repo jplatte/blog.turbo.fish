@@ -71,10 +71,10 @@ struct GetterMeta {
 ```
 
 Luckily when it comes to the parsing code, all we have to parse for now is
-`identifier = identifier`; this is because `syn` already takes care of parsing
+`name = <identifier>`; this is because `syn` already takes care of parsing
 the attribute's name and giving us only the argument list to parse when using
-`Attribute::parse_args`. Here's an illustration from `syn`s
-[documentation for that method][parse_args_docs]:
+`Attribute::parse_args`. Here's an illustration from
+[the documentation for that method][parse_args_docs]:
 
 ```
 #[my_attr(value < 5)]
@@ -119,7 +119,7 @@ fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
     // Parse the argument value
     let name = input.parse()?;
 
-    Ok(Self { name })
+    Ok(Self { name: Some(name) })
 }
 ```
 
