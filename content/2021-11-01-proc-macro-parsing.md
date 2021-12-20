@@ -150,7 +150,7 @@ code, you can have a look at the full code including the changes from above
 If you are interested in a small trick that allows you to change the intended
 syntax of a macro like here in a way that only shows a deprecation warning for
 uses of the previous style rather than breaking those uses, have a look at
-[the appendix](#appendix-deprecating-custom-syntax)
+[the appendix](#appendix-deprecating-custom-syntax).
 
 </div>
 
@@ -202,11 +202,28 @@ struct GetterMeta {
 }
 ```
 
-Adding support for cases (1) and (2) doesn't require any new concepts; here is
-a quick rundown of what the code changes look like:
+Adding support for cases (1) and (2) doesn't require any new concepts, only a
+little bit of busy work; here is a quick rundown of what the code changes look
+like:
 
 ```rust
-todo!()
+// Support both attributes in `impl Parse for GetterMeta`
+fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+    let arg_name: Ident = input.parse()?;
+    if arg_name == "name" {
+        let _: Token![=] = input.parse()?;
+        let name = input.parse()?;
+
+        Ok(Self { name: Some(name), vis: None })
+    } else if arg_name == "vis" {
+        let _: Token![=] = input.parse()?;
+        let vis = input.parse()?;
+
+        Ok(Self { name: None, vis: Some(vis) })
+    } else {
+        Err(syn::Error::new_spanned(arg_name, "unsupported getter attribute, expected `name`"))
+    }
+}
 ```
 
 Where it gets interesting is case (3):
