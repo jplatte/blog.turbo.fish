@@ -181,7 +181,7 @@ let getters = fields
 
         let name_from_attr = match attrs.len() {
             0 => None,
-            1 => get_name_attr(&attrs[0])?,
+            1 => get_name_attr(attrs[0])?,
             // Since `#[getter(name = ...)]` is the only available `getter` attribute,
             // we can just assume any attribute with `path.is_ident("getter")` is a
             // `getter(name)` attribute.
@@ -194,13 +194,13 @@ let getters = fields
             // stable at the time of writing.
             _ => {
                 let mut error = syn::Error::new_spanned(
-                    &attrs[1],
+                    attrs[1],
                     "redundant `getter(name)` attribute",
                 );
                 // `syn::Error::combine` can be used to create an error that spans
                 // multiple independent parts of the macro input.
                 error.combine(
-                    syn::Error::new_spanned(&attrs[0], "note: first one here"),
+                    syn::Error::new_spanned(attrs[0], "note: first one here"),
                 );
                 return Err(error);
             }
