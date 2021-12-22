@@ -203,11 +203,10 @@ struct GetterMeta {
 ```
 
 Adding support for cases (1) and (2) doesn't require any new concepts, only a
-little bit of busy work; here is a quick rundown of what the code changes look
-like:
+little bit of busy work: first supporting both attributes in
+`impl Parse for GetterMeta`:
 
 ```rust
-// Support both attributes in `impl Parse for GetterMeta`
 fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
     let arg_name: Ident = input.parse()?;
     if arg_name == "name" {
@@ -221,12 +220,58 @@ fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
 
         Ok(Self { name: None, vis: Some(vis) })
     } else {
-        Err(syn::Error::new_spanned(arg_name, "unsupported getter attribute, expected `name`"))
+        Err(syn::Error::new_spanned(
+            arg_name,
+            "unsupported getter attribute, expected `name`",
+        ))
     }
 }
 ```
 
-Where it gets interesting is case (3):
+… and second adjusting the code that generates the getter functions:
+
+```diff
+  let getters = fields
+      .into_iter()
+      .map(|f| {
+-        let attrs: Vec<_> =
+-            f.attrs.iter().filter(|attr| attr.path.is_ident("getter")).collect();
+-
+-        let name_from_attr = match attrs.len() {
+-            0 => None,
+-            1 => get_name_attr(attrs[0])?,
+-            _ => {
+-                let mut error =
+-                    syn::Error::new_spanned(attrs[1], "redundant `getter(name)` attribute");
+-                error.combine(syn::Error::new_spanned(attrs[0], "note: first one here"));
+-                return Err(error);
+-            }
+-        };
++        let meta: GetterMeta = f
++            .attrs
++            .iter()
++            .filter(|attr| attr.path.is_ident("getter"))
++            .try_fold(GetterMeta::default(), |meta, attr| -> syn::Result<_> {
++                Ok(meta.merge(attr.parse_args()?))
++            })?;
+
++        let visibility = meta.vis.unwrap_or_else(|| parse_quote! { pub });
+          // if there is no `getter(name)` attribute use the field name like before
+-        let method_name =
+-            name_from_attr.unwrap_or_else(|| f.ident.clone().expect("a named field"));
++        let method_name = meta.name.unwrap_or_else(|| f.ident.clone().expect("a named field"));
+          let field_name = f.ident;
+          let field_ty = f.ty;
+
+          Ok(quote! {
+-            pub fn #method_name(&self) -> &#field_ty {
++            #visibility fn #method_name(&self) -> &#field_ty {
+                  &self.#field_name
+              }
+          })
+```
+
+Where it gets interesting though is case (3):
 
 ## Parsing lists
 
