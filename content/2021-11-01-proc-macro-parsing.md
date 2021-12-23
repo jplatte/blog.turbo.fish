@@ -270,7 +270,8 @@ let meta: GetterMeta = f
     })?;
 
 let visibility = meta.vis.unwrap_or_else(|| parse_quote! { pub });
-let method_name = meta.name.unwrap_or_else(|| f.ident.clone().expect("a named field"));
+let method_name =
+    meta.name.unwrap_or_else(|| f.ident.clone().expect("a named field"));
 let field_name = f.ident;
 let field_ty = f.ty;
 
