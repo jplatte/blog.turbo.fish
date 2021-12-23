@@ -261,13 +261,33 @@ Ok(quote! {
 *to*:
 
 ```rust
+// Pre-requisite code is a `#[derive(Default)]` for GetterMeta and the following:
+use quote::ToTokens;
+
+impl GetterMeta {
+    fn merge(self, other: GetterMeta) -> syn::Result<Self> {
+        fn either<T: ToTokens>(a: Option<T>, b: Option<T>) -> syn::Result<Option<T>> {
+            match (a, b) {
+                (None, None) => Ok(None),
+                (Some(val), None) | (None, Some(val)) => Ok(Some(val)),
+                (Some(a), Some(b)) => {
+                    let mut error = syn::Error::new_spanned(a, "redundant attribute argument");
+                    error.combine(syn::Error::new_spanned(b, "note: first one here"));
+                    Err(error)
+                }
+            }
+        }
+
+        Ok(Self { name: either(self.name, other.name)?, vis: either(self.vis, other.vis)? })
+    }
+}
+
+// New getter function generation
 let meta: GetterMeta = f
     .attrs
     .iter()
     .filter(|attr| attr.path.is_ident("getter"))
-    .try_fold(GetterMeta::default(), |meta, attr| -> syn::Result<_> {
-        Ok(meta.merge(attr.parse_args()?))
-    })?;
+    .try_fold(GetterMeta::default(), |meta, attr| meta.merge(attr.parse_args()?))?;
 
 let visibility = meta.vis.unwrap_or_else(|| parse_quote! { pub });
 let method_name =
@@ -282,16 +302,17 @@ Ok(quote! {
 })
 ```
 
-Where it gets interesting though is case (3):
+Where it gets more interesting though is case (3):
 
 ## Parsing lists
 
-One way of dealing with case (3) would be to write a parsing loop and call
-`input.parse()?` for the list delimiters like for the argument names, `=` tokens
-and argument values. However, personally I prefer to decouple the logic for
-parsing the individual arguments and the logic for reporting conflicts across
-different arguments (since you could also have these errors between multiple
-attributes, rather than multiple arguments in one attribute).
+One way of dealing with the case of multiple arguments in one attribute would be
+to write a parsing loop and call `input.parse()?` for the list delimiters like
+for the argument names, `=` tokens and argument values. However, personally I
+prefer to decouple the logic for parsing the individual arguments and the logic
+for reporting conflicts across different arguments (since you could also have
+these errors between multiple attributes, rather than multiple arguments in one
+attribute).
 
 To achieve this, it is helpful to have a representation of a single derive
 argument, let's call it `GetterArgument`:
