@@ -304,29 +304,37 @@ Ok(quote! {
 
 Where it gets more interesting though is case (3):
 
-## Parsing lists
+## Lists
 
 One way of dealing with the case of multiple arguments in one attribute would be
 to write a parsing loop and call `input.parse()?` for the list delimiters like
-for the argument names, `=` tokens and argument values. However, personally I
-prefer to decouple the logic for parsing the individual arguments and the logic
-for reporting conflicts across different arguments (since you could also have
-these errors between multiple attributes, rather than multiple arguments in one
-attribute).
+for the argument names, `=` tokens and argument values. However, it is often
+easier to use syn's [`Punctuated`] type for this, which is similar to a `Vec`
+except it has a second generic argument for a delimiter that separates list
+elements and can be used for parsing through a few associated functions.
 
-To achieve this, it is helpful to have a representation of a single derive
-argument, let's call it `GetterArgument`:
+[`Punctuated`]: https://docs.rs/syn/latest/syn/punctuated/struct.Punctuated.html
+
+Depending on the task at hand, we might want to create an enum that represents a
+single argument to the derive macro, but in this case we can just reuse the
+existing logic and simply parse a `GetterMeta` that always has exactly one field
+set to `Some`, then use the `merge` function created above to collect them into
+a `GetterMeta` with all the arguments for a given field.
 
 ```rust
-enum GetterArgument {
-    Name(Ident),
-    Vis(Visibility),
-}
+// Before
+.try_fold(GetterMeta::default(), |meta, attr| meta.merge(attr.parse_args()?))?;
+
+/// After
+use syn::punctuated::Punctuated;
+
+.try_fold(GetterMeta::default(), |meta, attr| {
+    let list: Punctuated<GetterMeta, Token![,]> =
+        attr.parse_args_with(Punctuated::parse_terminated)?;
+
+    list.into_iter().try_fold(meta, GetterMeta::merge)
+})?;
 ```
-
-*show usage of [`syn::Punctuated`][syn_punctuated]*
-
-[syn_punctuated]: https://docs.rs/syn/latest/syn/punctuated/struct.Punctuated.html
 
 ## Custom keywords
 
