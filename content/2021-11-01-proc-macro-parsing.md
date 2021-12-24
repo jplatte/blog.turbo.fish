@@ -96,7 +96,7 @@ impl Parse for GetterMeta {
 }
 ```
 
-Now for the actual parsing code... It is so simple you might wonder why you
+Now for the actual parsing code… It is so simple you might wonder why you
 would ever bother with `syn::Meta` (spoiler: it's not always this simple).
 
 ```rust
@@ -202,66 +202,38 @@ struct GetterMeta {
 }
 ```
 
-Adding support for cases (1) and (2) doesn't require any new concepts, only a
-little bit of busy work: first supporting both attributes in
-`impl Parse for GetterMeta`:
+Adding support for case (1) doesn't require much work, the `Parse`
+implementation for `GetterMeta` simply needs one more branch:
 
 ```rust
-fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-    let arg_name: Ident = input.parse()?;
-    if arg_name == "name" {
-        let _: Token![=] = input.parse()?;
-        let name = input.parse()?;
+impl Parse for GetterMeta {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let arg_name: Ident = input.parse()?;
+        if arg_name == "name" {
+            let _: Token![=] = input.parse()?;
+            let name = input.parse()?;
 
-        Ok(Self { name: Some(name), vis: None })
-    } else if arg_name == "vis" {
-        let _: Token![=] = input.parse()?;
-        let vis = input.parse()?;
+            Ok(Self { name: Some(name), vis: None })
+        } else if arg_name == "vis" {
+            let _: Token![=] = input.parse()?;
+            let vis = input.parse()?;
 
-        Ok(Self { name: None, vis: Some(vis) })
-    } else {
-        Err(syn::Error::new_spanned(
-            arg_name,
-            "unsupported getter attribute, expected `name`",
-        ))
+            Ok(Self { name: None, vis: Some(vis) })
+        } else {
+            Err(syn::Error::new_spanned(
+                arg_name,
+                "unsupported getter attribute, expected `name`",
+            ))
+        }
     }
 }
 ```
 
-… and second adjusting the code that generates the getter functions *from*:
+For case (2), we introduce `GetterMeta::merge` as a way to reduce two
+`GetterMeta`s to one, raising an error if one of the arguments is provided
+multiple times:
 
 ```rust
-let attrs: Vec<_> =
-    f.attrs.iter().filter(|attr| attr.path.is_ident("getter")).collect();
-
-let name_from_attr = match attrs.len() {
-    0 => None,
-    1 => get_name_attr(attrs[0])?,
-    _ => {
-        let mut error =
-            syn::Error::new_spanned(attrs[1], "redundant `getter(name)` attribute");
-        error.combine(syn::Error::new_spanned(attrs[0], "note: first one here"));
-        return Err(error);
-    }
-};
-
-// if there is no `getter(name)` attribute use the field name like before
-let method_name =
-    name_from_attr.unwrap_or_else(|| f.ident.clone().expect("a named field"));
-let field_name = f.ident;
-let field_ty = f.ty;
-
-Ok(quote! {
-    pub fn #method_name(&self) -> &#field_ty {
-        &self.#field_name
-    }
-})
-```
-
-*to*:
-
-```rust
-// Pre-requisite code is a `#[derive(Default)]` for GetterMeta and the following:
 use quote::ToTokens;
 
 impl GetterMeta {
@@ -281,14 +253,55 @@ impl GetterMeta {
         Ok(Self { name: either(self.name, other.name)?, vis: either(self.vis, other.vis)? })
     }
 }
+```
 
-// New getter function generation
+Then comes the adjustment of the actual getter method generation. Here is the
+*previous* code for that:
+
+```rust
+let attrs: Vec<_> =
+    f.attrs.iter().filter(|attr| attr.path.is_ident("getter")).collect();
+
+let name_from_attr = match attrs.len() {
+    0 => None,
+    1 => get_name_attr(attrs[0])?,
+    _ => {
+        let mut error =
+            syn::Error::new_spanned(attrs[1], "redundant `getter(name)` attribute");
+        error.combine(syn::Error::new_spanned(attrs[0], "note: first one here"));
+        return Err(error);
+    }
+};
+
+let method_name =
+    name_from_attr.unwrap_or_else(|| f.ident.clone().expect("a named field"));
+let field_name = f.ident;
+let field_ty = f.ty;
+
+Ok(quote! {
+    pub fn #method_name(&self) -> &#field_ty {
+        &self.#field_name
+    }
+})
+```
+
+Now that we want to check all of the attributes, we no longer need to first
+check how many `getter` attributes there are, we can simply parse all of them
+and fold them into one using the new `GetterMeta::merge`:
+
+```rust
 let meta: GetterMeta = f
     .attrs
     .iter()
     .filter(|attr| attr.path.is_ident("getter"))
+    // First create an initial empty GetterMeta (using a derived Default impl).
+    // Then try parsing the attributes one-by-one and merging them into that
+    // instance, stopping if there is an errors from either `.parse_args()` or
+    // `.merge()` and propagating the first error (if any) out of this code with
+    // the second `?`.
     .try_fold(GetterMeta::default(), |meta, attr| meta.merge(attr.parse_args()?))?;
 
+// Extract visibility argument in addition to name (falling back to `pub`)
 let visibility = meta.vis.unwrap_or_else(|| parse_quote! { pub });
 let method_name =
     meta.name.unwrap_or_else(|| f.ident.clone().expect("a named field"));
@@ -296,13 +309,17 @@ let field_name = f.ident;
 let field_ty = f.ty;
 
 Ok(quote! {
+    // vvvvv Usage of visibility argument
     #visibility fn #method_name(&self) -> &#field_ty {
         &self.#field_name
     }
 })
 ```
 
-Where it gets more interesting though is case (3):
+There's of course many alternative ways to solve this, but I found `try_fold` to
+be the most elegant solution after some experimentation.
+
+Now onto case (3)…
 
 ## Lists
 
