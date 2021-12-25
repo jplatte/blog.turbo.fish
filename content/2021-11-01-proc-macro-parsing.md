@@ -15,7 +15,7 @@ so it's easier to follow along if you're read them already, but it should be
 understandable on its own if you are already somewhat familiar with writing
 proc-macros using `syn` & `quote`.
 
-## The plan
+## Why use custom parsing?
 
 In the last article, we added a custom attribute for our derive macro that uses
 the syntax `#[getter(name = "foo")]`. But what if we decide it should really be
@@ -123,6 +123,17 @@ fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
 }
 ```
 
+<div class="info">
+
+If you are wondering about the `Token` macro above: It is simply a nice and easy
+way to refer to the types in `syn`s [`token` module][mod_token]. See
+[its documentation][macro_token] for more information.
+
+[mod_token]: https://docs.rs/syn/1.0/syn/token/index.html
+[macro_token]: https://docs.rs/syn/1.0/syn/macro.Token.html
+
+</div>
+
 Now just update the `get_name_attr` implementation:
 
 ```rust
@@ -150,7 +161,7 @@ code, you can have a look at the full code including the changes from above
 If you are interested in a small trick that allows you to change the intended
 syntax of a macro like here in a way that only shows a deprecation warning for
 uses of the previous style rather than breaking those uses, have a look at
-[the appendix](#appendix-deprecating-custom-syntax).
+[Appendix A](#a-deprecating-custom-syntax).
 
 </div>
 
@@ -222,7 +233,7 @@ impl Parse for GetterMeta {
         } else {
             Err(syn::Error::new_spanned(
                 arg_name,
-                "unsupported getter attribute, expected `name`",
+                "unsupported getter attribute, expected `name` or `vis`",
             ))
         }
     }
@@ -353,13 +364,70 @@ use syn::punctuated::Punctuated;
 })?;
 ```
 
-## Custom keywords
+## Lookahead
 
-One more thing I want to showcase before concluding this article is custom
-keywords.
+One more thing I want to showcase before concluding this article is lookahead.
+In the `GetterMeta` parsing code above, we started off by parsing an identifier
+because regardless of whether we are parsing a name or visibility argument, it
+starts with `name` or `vis` which can both be parsed to `Ident`.
 
-*TODO*
+However, `syn` also provides ways of trying different parsers on the next token
+in the input in the form of [`ParseStream::lookahead1`][lookahead1]. This even
+applies to our case since what we really want to do is parse either exactly
+`name`, or exactly `vis`; not an arbitrary identifier. We can create custom
+keyword types for each using [the `custom_keyword` macro][custom_keyword] and
+then try parsing each of them:
 
-## Appendix: Deprecating custom syntax
+```rust
+mod kw {
+    use syn::custom_keyword;
+
+    custom_keyword!(name);
+    custom_keyword!(vis);
+}
+
+impl Parse for GetterMeta {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let lookahead = input.lookahead1();
+        if lookahead.peek(kw::name) {
+            let _: Token![=] = input.parse()?;
+            let name = input.parse()?;
+
+            Ok(Self { name: Some(name), vis: None })
+        } else if lookahead.peek(kw::vis) {
+            let _: Token![=] = input.parse()?;
+            let vis = input.parse()?;
+
+            Ok(Self { name: None, vis: Some(vis) })
+        } else {
+            // … and we get an appropriate error message for free!
+            // See Appendix B for a way to ensure this with tests.
+            Err(lookahead.error())
+        }
+    }
+}
+```
+
+[lookahead1]: https://docs.rs/syn/1.0/syn/parse/struct.ParseBuffer.html#method.lookahead1
+[custom_keyword]: https://docs.rs/syn/1.0/syn/macro.custom_keyword.html
+
+## Enough for today?
+
+That's all of what I can think of as being important to know about parsing
+custom syntax with `syn`. Like in the second article of this series, there's an
+appendix here with some tangentially related topics that you might find
+interesting (so this article does not end here), but I hope you now have an idea
+of how to write your own proc-macro parsing code!
+
+Even though it has taken more than half a year from the last article to this
+one, I still plan to add at least an article about
+<span class="abbrev" title="abstract syntax tree">AST</span> traversal and
+possibly one more after that one. See you next time!
+
+## Appendix
+
+### A. Deprecating custom syntax
 
 *re-add support for the literal variation*
+
+### B. Testing errors / warnings
