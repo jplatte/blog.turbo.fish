@@ -1,6 +1,5 @@
 +++
 title = "Procedural Macros: Parsing custom syntax"
-draft = true
 +++
 
 This is the fourth article in my series about procedural macros. In this
@@ -11,7 +10,7 @@ methods for a struct's fields) from the previous two articles
 * [Procedural Macros: A simple derive macro](/proc-macro-simple-derive/) and
 * [Procedural Macros: Error handling](/proc-macro-error-handling/),
 
-so it's easier to follow along if you're read them already, but it should be
+so it's easier to follow along if you've read them already, but it should be
 understandable on its own if you are already somewhat familiar with writing
 proc-macros using `syn` & `quote`.
 
@@ -51,7 +50,7 @@ fn get_name_attr(attr: &Attribute) -> syn::Result<Option<Ident>> {
     // Parsing into `syn::Meta`:
     let meta = attr.parse_meta()?;
 
-    // Pattern matching and error handling...
+    // Pattern matching and error handling…
 }
 ```
 
@@ -134,6 +133,17 @@ way to refer to the types in `syn`s [`token` module][mod_token]. See
 
 </div>
 
+If the parsing fails, for example because of a literal instead of an identifier
+after the `=`, the error message will look like this:
+
+```
+error: expected identifier
+ --> derive_getters/tests/news_feed.rs:7:21
+  |
+7 |     #[getter(name = "category")]
+  |                     ^^^^^^^^^^
+```
+
 Now just update the `get_name_attr` implementation:
 
 ```rust
@@ -152,7 +162,8 @@ need a quick reminder on how this function fits in with the rest of the macro
 code, you can have a look at the full code including the changes from above
 [here][parsing_basics_code].
 
-[parsing_basics_code]: https://github.com/jplatte/proc-macro-blog-examples/tree/8eadec2c3c95f9e2e975aa402653d476ead8c71d/derive_getters
+[prev_article]: /proc-macro-error-handling/
+[parsing_basics_code]: https://github.com/jplatte/proc-macro-blog-examples/tree/544fdff61c8fa579f747acece7e21fc40fc20776/derive_getters
 
 </div>
 
@@ -161,7 +172,8 @@ code, you can have a look at the full code including the changes from above
 If you are interested in a small trick that allows you to change the intended
 syntax of a macro like here in a way that only shows a deprecation warning for
 uses of the previous style rather than breaking those uses, have a look at
-[Appendix A](#a-deprecating-custom-syntax).
+[the appendix](#appendix-deprecating-custom-syntax) (though I recommend going
+through the rest of the article first).
 
 </div>
 
@@ -180,7 +192,7 @@ won't be the only kind of branching needed anymore.
 field: Ty,
 
 // New possibilities: (1)
-// Override the visibility of a generated getter
+// Override only the visibility of a generated getter
 #[getter(vis = pub(crate))]
 field: Ty,
 
@@ -254,17 +266,27 @@ impl GetterMeta {
                 (None, None) => Ok(None),
                 (Some(val), None) | (None, Some(val)) => Ok(Some(val)),
                 (Some(a), Some(b)) => {
-                    let mut error = syn::Error::new_spanned(a, "redundant attribute argument");
+                    let mut error =
+                        syn::Error::new_spanned(a, "redundant attribute argument");
                     error.combine(syn::Error::new_spanned(b, "note: first one here"));
                     Err(error)
                 }
             }
         }
 
-        Ok(Self { name: either(self.name, other.name)?, vis: either(self.vis, other.vis)? })
+        Ok(Self {
+            name: either(self.name, other.name)?,
+            vis: either(self.vis, other.vis)?,
+        })
     }
 }
 ```
+
+<div class="info">
+
+To test your error handling, have a look at the [trybuild crate](https://docs.rs/trybuild).
+
+</div>
 
 Then comes the adjustment of the actual getter method generation. Here is the
 *previous* code for that:
@@ -298,7 +320,7 @@ Ok(quote! {
 
 Now that we want to check all of the attributes, we no longer need to first
 check how many `getter` attributes there are, we can simply parse all of them
-and fold them into one using the new `GetterMeta::merge`:
+and fold them into one using the new `merge` method:
 
 ```rust
 let meta: GetterMeta = f
@@ -366,8 +388,8 @@ use syn::punctuated::Punctuated;
 
 ## Lookahead
 
-One more thing I want to showcase before concluding this article is lookahead.
-In the `GetterMeta` parsing code above, we started off by parsing an identifier
+One more thing I want to go over before concluding this article is lookahead. In
+the `GetterMeta` parsing code above, we started off by parsing an identifier
 because regardless of whether we are parsing a name or visibility argument, it
 starts with `name` or `vis` which can both be parsed to `Ident`.
 
@@ -390,18 +412,19 @@ impl Parse for GetterMeta {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let lookahead = input.lookahead1();
         if lookahead.peek(kw::name) {
+            let _: kw::name = input.parse()?;
             let _: Token![=] = input.parse()?;
             let name = input.parse()?;
 
             Ok(Self { name: Some(name), vis: None })
         } else if lookahead.peek(kw::vis) {
+            let _: kw::vis = input.parse()?;
             let _: Token![=] = input.parse()?;
             let vis = input.parse()?;
 
             Ok(Self { name: None, vis: Some(vis) })
         } else {
             // … and we get an appropriate error message for free!
-            // See Appendix B for a way to ensure this with tests.
             Err(lookahead.error())
         }
     }
@@ -413,21 +436,98 @@ impl Parse for GetterMeta {
 
 ## Enough for today?
 
-That's all of what I can think of as being important to know about parsing
-custom syntax with `syn`. Like in the second article of this series, there's an
-appendix here with some tangentially related topics that you might find
-interesting (so this article does not end here), but I hope you now have an idea
-of how to write your own proc-macro parsing code!
+That's all that I can think of as being important to know about parsing custom
+syntax with `syn`. Like in the second article of this series, there's a appendix
+here with some tangentially related topics that you might find interesting (so
+this article does not end here), but I hope you now have an idea of how to write
+your own proc-macro parsing code!
 
-Even though it has taken more than half a year from the last article to this
-one, I still plan to add at least an article about
+As always, you can review the code shown in this article as a working crate:
+
+* [Complete code](https://github.com/jplatte/proc-macro-blog-examples/tree/parsing-v1/derive_getters)
+* [Individual commits](https://github.com/jplatte/proc-macro-blog-examples/compare/error-handling-v1...parsing-v1)
+
+Although it has taken more than half a year from the last article to this one, I
+still plan to add at least an article about
 <span class="abbrev" title="abstract syntax tree">AST</span> traversal and
 possibly one more after that one. See you next time!
 
-## Appendix
+## Appendix: Deprecating custom syntax
 
-### A. Deprecating custom syntax
+Here's one more small sub-scenario: Suppose you have already released `getters`
+v1.0.0 with `#[getters(name = "foo")]` attributes and don't want to do another
+breaking-change release soon. Yet you want to allow the new syntax without the
+quotes and deprecate the old one. Using `.lookahead1()` on the input as in the
+[Lookahead](#lookahead) section above, it is pretty straight-forward to allow
+both an identifier and a string literal in parsing:
 
-*re-add support for the literal variation*
+```rust
+// Inside the `kw::name` branch:
+let _: kw::name = input.parse()?;
+let _: Token![=] = input.parse()?;
 
-### B. Testing errors / warnings
+// New: Parse identifier either directly or from string literal
+let lookahead = input.lookahead1();
+let (name, deprecated_name_syntax) = if lookahead.peek(Ident) {
+    (input.parse()?, false)
+} else if lookahead.peek(LitStr) {
+    let s: LitStr = input.parse()?;
+    let span = s.span(); // We will need this span for error reporting
+
+    let mut name: Ident =
+        syn::parse_str(&s.value()).map_err(|e| syn::Error::new_spanned(s, e))?;
+    name.set_span(span);
+
+    (name, true)
+} else {
+    return Err(lookahead.error());
+};
+
+Ok(Self { name: Some(name), vis: None })
+```
+
+Deprecating the one form now just requires a little extra trick: First we
+capture whether the deprecated name syntax was used in `GetterMeta`:
+
+```rust
+struct GetterMeta {
+    name: Option<Ident>,
+    vis: Option<Visibility>,
+
+    // Set this to true through the `LitStr` branch
+    deprecated_name_syntax: bool,
+}
+```
+
+… and then emitting the deprecation warning if that flag is set by generating a
+call to a deprecated function that uses the span of that attribute:
+
+```rust
+let deprecation_note = meta.deprecated_name_syntax.then(|| {
+    quote_spanned! {method_name=>
+        #[deprecated = "Using a string literal as a name attribute is deprecated.\
+            Use an identifier instead (remove the quotes)."]
+        fn name_literal() {}
+        name_literal();
+    }
+});
+
+Ok(quote! {
+    #visibility fn #method_name(&self) -> &#field_ty {
+        #deprecation_note
+        &self.#field_name
+    }
+})
+```
+
+This is what a warning generated this way will look like:
+
+```
+warning: use of deprecated function `NewsFeed::category::name_literal`: Using a string literal as a name attribute is deprecated. Use an identifier instead (remove the quotes).
+ --> derive_getters/tests/news_feed.rs:7:21
+  |
+7 |     #[getter(name = "category")]
+  |                     ^^^^^^^^^^
+  |
+  = note: `#[warn(deprecated)]` on by default
+```
