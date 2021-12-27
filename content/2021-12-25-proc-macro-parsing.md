@@ -452,6 +452,14 @@ still plan to add at least an article about
 <span class="abbrev" title="abstract syntax tree">AST</span> traversal and
 possibly one more after that one. See you next time!
 
+*If you have comments about this article, you can leave them in any of these
+places: [reddit], [Lemmy], [users.rust-lang.org][URLO] or [Twitter].*
+
+[reddit]: https://www.reddit.com/r/rust/comments/roaofg/procedural_macros_parsing_custom_syntax/
+[Lemmy]: https://lemmy.ml/post/128393
+[URLO]: https://users.rust-lang.org/t/blog-post-procedural-macros-parsing-custom-syntax/69400?u=jplatte
+[Twitter]: https://twitter.com/_jplatte/status/1474747780937756675
+
 ## Appendix: Deprecating custom syntax
 
 Here's one more small sub-scenario: Suppose you have already released `getters`
