@@ -46,34 +46,7 @@
         </div>
     </div>
 
-    <aside class="sidebar">
-        <small>This blog is written by</small>
-        <div class="author">
-            <img class="author-icon" src="{{ config.extra.author.icon_url }}" alt="">
-            <span class="author-name">{{ config.extra.author.name }}</span>
-        </div>
-
-        <div class="about">
-            {{ config.extra.about | markdown | safe }}
-        </div>
-
-        <ul class="ext-links">
-        {% for link in config.extra.external_links %}
-            <li>
-                <small>{{ link.title }}</small><br>
-                <a href="{{ link.a_href }}">{{ link.a_text }}</a>
-            </li>
-        {% endfor %}
-        </ul>
-
-        <div class="rss">
-            <a href="/rss.xml">{% include "includes/rss.svg.html" %}RSS Feed</a>
-        </div>
-
-        <div class="sidebar-footer">
-            <small>Built using <a href="https://www.getzola.org/">Zola</a></small>
-        </div>
-    </aside>
+    {% include "includes/sidebar.html" %}
 </div>
 
 </html>
