@@ -34,7 +34,7 @@ Note that custom attribute arguments are not the only use case for parsing
 custom syntax. Perhaps more importantly, you can have your own
 <span class="abbrev" title="domain-specific languages">DSLs</span> within
 function-like macros (or attributes). An advanced example of this is [Yew]'s
-[`html!` macro](https://yew.rs/concepts/html).
+[`html!` macro](https://yew.rs/concepts/html/introduction).
 
 [Yew]: https://yew.rs/
 

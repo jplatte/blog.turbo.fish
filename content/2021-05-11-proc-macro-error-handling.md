@@ -246,7 +246,7 @@ Ok(quote! {
 If this is the first time you have seen `.collect::<Result<_, _>>`, you can find the documentation
 for the trait implementation that makes it possible [here].
 
-[here]: https://doc.rust-lang.org/std/result/enum.Result.html#impl-FromIterator%3CResult%3CA%2C%20E%3E%3E
+[here]: https://doc.rust-lang.org/std/result/enum.Result.html#impl-FromIterator%3CResult%3CA%2C%20E%3E%3E-for-Result%3CV%2C%20E%3E
 
 </div>
 
