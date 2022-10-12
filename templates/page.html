@@ -15,16 +15,16 @@
 </article>
 
 <ul class="other-post-links">
-    {% if page.earlier %}
+    {% if page.lower %}
     <li class="previous-post">
         <small>Previous post</small>
-        <a href="{{ page.earlier.permalink }}">{{ page.earlier.title }}</a>
+        <a href="{{ page.lower.permalink }}">{{ page.lower.title }}</a>
     </li>
     {% endif %}
-    {% if page.later %}
+    {% if page.higher %}
     <li class="next-post">
         <small>Next post</small>
-        <a href="{{ page.later.permalink }}">{{ page.later.title }}</a>
+        <a href="{{ page.higher.permalink }}">{{ page.higher.title }}</a>
     </li>
     {% endif %}
 </ul>
