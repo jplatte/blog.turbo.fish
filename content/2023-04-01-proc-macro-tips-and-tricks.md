@@ -7,9 +7,13 @@ draft = true
 
 *Ident::parse_any, format_ident!*
 
-## Use fine-grained error handling
+## Advanced error handling
 
-*if you want the best user experience*
+*Use fine-grained errors if you want the best user experience*
+
+## How to search (and replace) things
+
+*syn::visit*
 
 ## How to handle peer dependencies
 
