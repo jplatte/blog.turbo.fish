@@ -10,12 +10,12 @@
     </div>
 
     <ul class="ext-links">
-    {% for link in config.extra.external_links %}
+        {% for link in config.extra.external_links %}
         <li>
             <small>{{ link.title }}</small><br>
             <a href="{{ link.a_href }}">{{ link.a_text }}</a>
         </li>
-    {% endfor %}
+        {% endfor %}
     </ul>
 
     <div class="rss">
@@ -23,6 +23,6 @@
     </div>
 
     <div class="sidebar-footer">
-        <small>Built using <a href="https://www.getzola.org/">Zola</a></small>
+        <small>Built using <a href="https://github.com/jplatte/hinoki">Hinoki</a></small>
     </div>
 </aside>
