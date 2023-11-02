@@ -5,7 +5,7 @@ Hello, dear reader! Today, I am excited to announce
 
 ## [caniuse.rs](https://caniuse.rs)
 
-![screenshot of caniuse.rs](screenshot.png)
+![screenshot of caniuse.rs](/img/caniuse_rs.png)
 
 A website I created, which, in contrast to [turbo.fish](https://turbo.fish/),
 has a practical use: It allows you to quickly find out which version of Rust
