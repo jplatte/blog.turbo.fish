@@ -1,9 +1,14 @@
 # blog.turbo.fish
 
-[![builds.sr.ht status](https://builds.sr.ht/~jplatte/blog.turbo.fish.svg)](https://builds.sr.ht/~jplatte/blog.turbo.fish?)
-
 This repository contains the sources for my blog at <https://blog.turbo.fish/>.
 
-To build it, [zola][] needs to be installed.
+This branch contains a work-in-progress port to my own static site generator,
+hinoki. It is not yet publically available.
 
-[zola]: https://www.getzola.org/documentation/getting-started/installation/
+## Build instructions
+
+```sh
+hinoki build
+# hinoki also has no dev server yet
+(pushd public; python -m http.server)
+```

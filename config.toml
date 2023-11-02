@@ -1,16 +1,17 @@
-title = "blog.turbo.fish"
-base_url = "https://blog.turbo.fish"
-description = "Jonas Platte's personal blog"
+output_dir = "public"
 
-generate_feed = true
-feed_filename = "rss.xml"
+[content."blog/*.md"]
+template = "article.html"
+process = "markdown_to_html"
+date = "{source_file_stem|date_prefix}"
+path = "/{source_file_stem|strip_date_prefix}/index.html"
 
-compile_sass = false
-build_search_index = false
-
-[markdown]
-highlight_code = true
-highlight_theme = "visual-studio-dark"
+#title = "blog.turbo.fish"
+#base_url = "https://blog.turbo.fish"
+#description = "Jonas Platte's personal blog"
+#
+#generate_feed = true
+#feed_filename = "rss.xml"
 
 [extra]
 about = """
