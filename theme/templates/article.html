@@ -1,7 +1,7 @@
 {% extends "skel.html" %}
 {% block html_title %}{{ page.title }} | blog.turbo.fish{% endblock html_title %}
 {% block content %}
-{% set iso_date = page.date | date(format = '%Y-%m-%d') %}
+{% set iso_date = page.date | dateformat(format = "short") %}
 <article>
     <h1 class="page-title">{{ page.title }}</h1>
     <small class="post-meta">
@@ -11,20 +11,22 @@
         <a href="/">blog.turbo.fish</a>
     </small>
     {% block article_info %}{% endblock article_info %}
-    {{ page.content | safe }}
+    {{ content | safe }}
 </article>
 
 <ul class="other-post-links">
-    {% if page.higher %}
+    {% set prev_page = get_file(prev_by = "date") %}
+    {% set next_page = get_file(next_by = "date") %}
+    {% if prev_page is not none %}
     <li class="previous-post">
         <small>Previous post</small>
-        <a href="{{ page.higher.permalink }}">{{ page.higher.title }}</a>
+        <a href="/{{ prev_page.path }}">{{ prev_page.title }}</a>
     </li>
     {% endif %}
-    {% if page.lower %}
+    {% if next_page is not none %}
     <li class="next-post">
         <small>Next post</small>
-        <a href="{{ page.lower.permalink }}">{{ page.lower.title }}</a>
+        <a href="/{{ next_page.path }}">{{ next_page.title }}</a>
     </li>
     {% endif %}
 </ul>

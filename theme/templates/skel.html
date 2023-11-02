@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link rel="alternate" type="application/rss+xml" href="/rss.xml" title="blog.turbo.fish">
 
-{% if config.mode == "Serve" -%}
+{# {% if config.mode == "Serve" -%}
     {%- set script_src = "'self'" -%}
     {%- set live_reload = "; connect-src ws://127.0.0.1:1024/livereload" -%}
 {%- else -%}
@@ -20,7 +20,7 @@
     style-src 'self' 'unsafe-inline';
     frame-src 'none'
     {{ live_reload | safe }}
-">
+"> #}
 
 <title>{% block html_title %}{% endblock html_title %}</title>
 
@@ -32,7 +32,7 @@
         {% block content %}{% endblock content %}
 
         <div class="bg" aria-hidden="true" tabindex="-1">
-        {% for _ in range(end=5) %}
+            {% for _ in range(5) %}
             <t><​></t>
             <u><​></u>
             <r><​></r>
@@ -42,7 +42,7 @@
             <i><​></i>
             <s><​></s>
             <h><​></h>
-        {% endfor %}
+            {% endfor %}
         </div>
     </div>
 

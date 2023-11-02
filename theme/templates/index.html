@@ -1,0 +1,14 @@
+{% extends "skel.html" %}
+{% block html_title %}blog.turbo.fish{% endblock html_title %}
+{% block content %}
+<main>
+    <h1>blog.turbo.fish</h1>
+    {% for page in get_files("blog") %}
+    {% set iso_date = page.date | dateformat(format = "short") %}
+    <h2 class="post-entry">
+        <a href="/{{ page.path | safe }}">{{ page.title }}</a>
+        <time datetime="{{ iso_date }}">· {{ iso_date }}</time>
+    </h2>
+    {% endfor %}
+</main>
+{% endblock content %}
