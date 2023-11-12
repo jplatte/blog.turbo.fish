@@ -162,7 +162,7 @@ that would be much better.
 
 If you want to learn about the other fields of `DeriveInput` and `DataStruct`,
 the other variants of `Data` and `Fields` and such, you can find all that in
-[syn's documentation](https://docs.rs/syn/1.0).
+[syn's documentation](https://docs.rs/syn/2.0).
 
 </div>
 
@@ -518,7 +518,7 @@ code that inspects a few data structures with the only "magic" being inside
 The full code after these changes can be found [here][simple-derive-ext].
 
 [last time]: /proc-macro-basics/#a-note-on-macro-expansion
-[simple-derive-ext]: https://github.com/jplatte/proc-macro-blog-examples/tree/simple-derive-ext-v1/derive_getters
+[simple-derive-ext]: https://github.com/jplatte/proc-macro-blog-examples/tree/simple-derive-ext-v2/derive_getters
 
 [^1]: Instead of `let input = parse_macro_input!(input as DeriveInput);`, we could also have written `let input: DeriveInput = parse_macro_input!(input);`. This still seems less common, so I went with the former.
 

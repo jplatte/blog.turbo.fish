@@ -58,23 +58,23 @@ pub fn getters(input: TokenStream) -> TokenStream {
 ## Parsing the attribute
 
 Since custom parsing is complex enough to deserve its own article, I'm going to
-use `syn::Attribute::parse_meta` here, which is sufficient for the syntax shown
-above.
+use comma-separated `syn::Meta` parsing here, which is sufficient for the syntax
+shown above. The parser function will return `syn::Result<T>`, which is simply a
+type alias for `Result<T, syn::Error>`.
 
 ```rust
 // Note: syn::Ident is a re-export of proc_macro2::Ident
-use syn::{Attribute, Ident};
+use syn::{punctuated::Punctuated, Attribute, Ident, Meta, Token};
 
 fn get_name_attr(attr: &Attribute) -> syn::Result<Option<Ident>> {
-    let meta = attr.parse_meta()?;
-    todo!()
+    // Error when the attribute is just `#[getter]`, or `#[getter = something]`.
+    // We require a parenthesized list, i.e. `#[getter(something)]`.
+    let meta_list = attr.meta.require_list()?;
+
+    // Parse the contents of the list as Meta structs, delimited by commas.
+    let nested = meta_list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
 }
 ```
-
-The `syn::Result<T>` type above is simply a type alias for
-`Result<T, syn::Error>`. Since `syn`s `Meta` type can only represent a limited
-subset of the arbitrary token trees allowed within attributes, parsing it is
-fallible, and returns `syn::Result<syn::Meta>`.
 
 Luckily detecting whether an attribute is possible without calling any of
 `Attribute`s `parse_` methods, so we can detect whether the attribute is for us
@@ -260,7 +260,7 @@ required to return just a `TokenStream`.
 However, the solution is almost as easy and you might already have seen it if
 you had a look at `syn::Error`s [documentation][error-docs]:
 
-[error-docs]: https://docs.rs/syn/1.0/syn/parse/struct.Error.html
+[error-docs]: https://docs.rs/syn/2.0/syn/parse/struct.Error.html
 
 ```rust
 // Previously, with expand_getters returning proc_macro2::TokenStream

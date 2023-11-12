@@ -76,7 +76,7 @@ compilation contexts. For more details, see the linked documentation.
 </div>
 
 [proc_macro]: https://doc.rust-lang.org/proc_macro/
-[syn]: https://docs.rs/syn/1.0
+[syn]: https://docs.rs/syn/2.0
 [quote]: https://docs.rs/quote/1.0
 [proc-macro2]: https://docs.rs/proc-macro2/1.0
 [AST]: https://en.wikipedia.org/wiki/Abstract_syntax_tree
