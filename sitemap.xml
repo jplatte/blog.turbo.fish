@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+        <loc>https://blog.turbo.fish/</loc>
+    </url>
+    <url>
+        <loc>https://blog.turbo.fish/announcing-caniuse-rs/</loc>
+        <lastmod>2020-03-04</lastmod>
+    </url>
+    <url>
+        <loc>https://blog.turbo.fish/cargo-features/</loc>
+        <lastmod>2020-10-30</lastmod>
+    </url>
+    <url>
+        <loc>https://blog.turbo.fish/proc-macro-basics/</loc>
+        <lastmod>2021-02-16</lastmod>
+    </url>
+    <url>
+        <loc>https://blog.turbo.fish/proc-macro-error-handling/</loc>
+        <lastmod>2021-05-11</lastmod>
+    </url>
+    <url>
+        <loc>https://blog.turbo.fish/proc-macro-parsing/</loc>
+        <lastmod>2021-12-25</lastmod>
+    </url>
+    <url>
+        <loc>https://blog.turbo.fish/proc-macro-simple-derive/</loc>
+        <lastmod>2021-02-20</lastmod>
+    </url>
+    <url>
+        <loc>https://blog.turbo.fish/rust-2020/</loc>
+        <lastmod>2019-11-02</lastmod>
+    </url>
+</urlset>
