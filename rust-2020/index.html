@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en" class="index">
+
+<meta charset="utf-8">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="alternate" type="application/rss+xml" href="/rss.xml" title="blog.turbo.fish">
+
+<meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'none';
+    style-src 'self' 'unsafe-inline';
+    frame-src 'none'
+    
+">
+
+<title>Rust 2020: Generics &amp; Cargo Features | blog.turbo.fish</title>
+
+<link rel="stylesheet" href="/normalize.css">
+<link rel="stylesheet" href="/blog.css">
+
+<div class="page">
+    <div class="content">
+        
+
+<article>
+    <h1 class="page-title">Rust 2020: Generics &amp; Cargo Features</h1>
+    <small class="post-meta">
+        Published
+        <time datetime="2019-11-02">2019-11-02</time>
+        on
+        <a href="/">blog.turbo.fish</a>
+    </small>
+    
+    <p>This is my personal wishlist of things I'd like to see in 2020 relating to Rust.
+It only contains technical items, not because I disagree with the people who say
+we should prioritize some non-technical things, but because I feel like I don't
+have much of value to add to that topic.<sup class="footnote-reference"><a href="#1">1</a></sup></p>
+<h2 id="generics">Generics</h2>
+<p>My absolute top one wishlist feature: const generics. The language I'm most
+proficient in other than Rust is C++ and its equivalent feature (with the
+<em>beautiful</em> name of 'non-type template parameters') is one of the only things I
+miss in Rust from time to time. And while most of the things I'd like to do with
+it can be done using <a href="https://crates.io/crates/typenum">typenum</a>, it can result in quite long type
+names, which makes error messages including those types very hard to read.<sup class="footnote-reference"><a href="#2">2</a></sup></p>
+<p>I'd also love to see <a href="https://github.com/rust-lang/rust/issues/44265">GATs</a> coming to nightly next year. Since they are
+required for <code>async fn</code> in traits, I have my hopes up for this happening. Then
+again, <code>async fn</code> is a <a href="https://smallcultfollowing.com/babysteps/blog/2019/10/26/async-fn-in-traits-are-hard/">really hard problem</a> even with GATs available,
+so they might not get prioritized until the path forward is clearer. Either way,
+I'd love to play around with them.</p>
+<h2 id="cargo-features">Cargo features</h2>
+<p>There's a <a href="https://github.com/rust-lang/cargo/issues/1197">few</a> <a href="https://github.com/rust-lang/cargo/issues/1796">long-standing</a> <a href="https://github.com/rust-lang/cargo/issues/2589">issues</a>
+<a href="https://github.com/rust-lang/cargo/issues/2911">in</a> <a href="https://github.com/rust-lang/cargo/issues/5730">cargo</a> that all relate to the idea of <em>one</em> feature-set
+per (transitive) dependency. On first thought, it seems reasonable to require
+tests to run with dependencies compiled with the same feature set that's used
+when distributing your app or library as a release build. However, once you
+consider build scripts and <code>no_std</code>, this doesn't work so well anymore.</p>
+<p>A prime example of this issue is serde_json, which has a hard dependency on
+std, purely because <code>dev-dependencies</code> and regular dependencies have their
+features unified (see <a href="https://github.com/serde-rs/json/pull/516">serde/json#516</a>). There's of course a reason
+that these issues have been open for so long, and that is that it would require
+a big rewrite of some parts of cargo. I don't know what needs to happen for this
+rewrite to start, but I'd love to see (some of) these issues finally being
+resolved in 2020.</p>
+<p>Another unfortunate thing about cargo features is that enabling a feature of an
+optional dependency also enables that dependency (<a href="https://github.com/rust-lang/cargo/issues/3494">rust-lang/cargo#3494</a>).
+AFAICT, solving this doesn't require any big rewrites, just a consensus on which
+way to solve it.</p>
+<h2 id="ide-experience">IDE experience</h2>
+<p>This one didn't make it into the title, but I'd nevertheless like to see the IDE
+experience improve further. RLS is already more useful than Microsoft's C/C++
+extension in Visual Studio Code, but some things seem like they are still
+somewhat far away from their possible best: edit-to-feedback time,
+autocompletion, and finding item definitions on mouseover are all things I'd
+like to see improved next year (and I think they will be).</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>Most people reading this will already have come across const generics, GATs as
+well as the cargo and RLS issues I wrote about. I didn't write about new ideas
+I think should be tried out, because I think Rust doesn't need these kinds of
+changes at the moment. I agree with the previous Rust 2020 blog posts that
+called for another year of maturity. Let's leave the anonymous records; effects;
+linear, dependent and higher-kinded types and whatever else for later.</p>
+<p>Thanks for reading!</p>
+<div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup>
+<p>I very much sympathize with <a href="https://xampprocky.github.io/public/blog/rust-2021/">XAMPPRocky's post about Rust in 2020</a>
+though</p>
+</div>
+<div class="footnote-definition" id="2"><sup class="footnote-definition-label">2</sup>
+<p>Try what happens when you uncomment the following line in <a href="https://crates.io/crates/uom">uom</a>'s
+examples: <a href="https://github.com/iliekturtles/uom/blob/4b338869556be39bac4c3320da0c3298975178fa/examples/si.rs#L16">link</a></p>
+</div>
+
+</article>
+
+<ul class="other-post-links">
+    
+    
+    <li class="next-post">
+        <small>Next post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;announcing-caniuse-rs&#x2F;">Announcing caniuse.rs</a>
+    </li>
+    
+</ul>
+
+
+        <div class="bg" aria-hidden="true" tabindex="-1">
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+        </div>
+    </div>
+
+    <aside class="sidebar">
+    <small>This blog is written by</small>
+    <div class="author">
+        <img class="author-icon" src="&#x2F;img&#x2F;jplatte.png" alt="">
+        <span class="author-name">Jonas Platte</span>
+    </div>
+
+    <div class="about">
+        <p>I am the creator of <a href="https://turbo.fish/">turbo.fish</a> and <a href="https://caniuse.rs/">caniuse.rs</a>. You may also know me
+because of my involvement with the <a href="https://ruma.dev/">Ruma</a> project.</p>
+
+    </div>
+
+    <ul class="ext-links">
+    
+        <li>
+            <small>sourcehut</small><br>
+            <a href="https:&#x2F;&#x2F;git.sr.ht&#x2F;~jplatte&#x2F;">~jplatte</a>
+        </li>
+    
+        <li>
+            <small>github</small><br>
+            <a href="https:&#x2F;&#x2F;github.com&#x2F;jplatte">jplatte</a>
+        </li>
+    
+        <li>
+            <small>liberapay</small><br>
+            <a href="https:&#x2F;&#x2F;liberapay.com&#x2F;jplatte&#x2F;">jplatte</a>
+        </li>
+    
+    </ul>
+
+    <div class="rss">
+        <a href="/rss.xml"><svg viewBox="0 0 1536 1536" width="13" height="13" xmlns="http://www.w3.org/2000/svg">
+    <title>News feed (Atom)</title>
+    <path d="M384 1344c0 106-86 192-192 192S0 1450 0 1344s86-192 192-192 192 86 192 192zm512 123c1 18-5 35-17 48-12 14-29 21-47 21H697c-33 0-60-25-63-58-29-305-271-547-576-576-33-3-58-30-58-63V704c0-18 7-35 21-47 11-11 27-17 43-17h5c213 17 414 110 565 262 152 151 245 352 262 565zm512 2c1 17-5 34-18 47-12 13-28 20-46 20h-143c-34 0-62-26-64-60C1104 895 641 432 60 398c-34-2-60-30-60-63V192c0-18 7-34 20-46 12-12 28-18 44-18h3c350 18 679 165 927 414 249 248 396 577 414 927z"/>
+</svg>RSS Feed</a>
+    </div>
+
+    <div class="sidebar-footer">
+        <small>Built using <a href="https://www.getzola.org/">Zola</a></small>
+    </div>
+</aside>
+
+</div>
+
+</html>
