@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en" class="index">
+
+<meta charset="utf-8">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="alternate" type="application/rss+xml" href="/rss.xml" title="blog.turbo.fish">
+
+<meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'none';
+    style-src 'self' 'unsafe-inline';
+    frame-src 'none'
+    
+">
+
+<title>Procedural Macros: Parsing custom syntax | blog.turbo.fish</title>
+
+<link rel="stylesheet" href="/normalize.css">
+<link rel="stylesheet" href="/blog.css">
+
+<div class="page">
+    <div class="content">
+        
+
+<article>
+    <h1 class="page-title">Procedural Macros: Parsing custom syntax</h1>
+    <small class="post-meta">
+        Published
+        <time datetime="2021-12-25">2021-12-25</time>
+        on
+        <a href="/">blog.turbo.fish</a>
+    </small>
+    
+    <p>This is the fourth article in my series about procedural macros. In this
+article, I will explain how you can use <code>syn</code> to parse things that are not Rust
+code. It will once again extend the <code>Getters</code> derive macro (which generates get
+methods for a struct's fields) from the previous two articles</p>
+<ul>
+<li><a href="/proc-macro-simple-derive/">Procedural Macros: A simple derive macro</a> and</li>
+<li><a href="/proc-macro-error-handling/">Procedural Macros: Error handling</a>,</li>
+</ul>
+<p>so it's easier to follow along if you've read them already, but it should be
+understandable on its own if you are already somewhat familiar with writing
+proc-macros using <code>syn</code> &amp; <code>quote</code>.</p>
+<h2 id="why-use-custom-parsing">Why use custom parsing?</h2>
+<p>In the last article, we added a custom attribute for our derive macro that uses
+the syntax <code>#[getter(name = "foo")]</code>. But what if we decide it should really be
+<code>#[getter(name = foo)]</code>, because why would you have to quote the name?</p>
+<p>This won't work with <code>syn</code>s <code>Meta</code> type because it predates <a href="https://blog.rust-lang.org/2019/04/11/Rust-1.34.0.html#custom-attributes-accept-arbitrary-token-streams">support for
+arbitrary token streams in proc-macro attributes</a>
+in the Rust compiler and arbitrary token streams can't really have a
+representation that is similarily easy to pattern match on. That is why we need
+some parsing code to extract the data we want from the attribute now.</p>
+<div class="info">
+<p>Note that custom attribute arguments are not the only use case for parsing
+custom syntax. Perhaps more importantly, you can have your own
+<span class="abbrev" title="domain-specific languages">DSLs</span> within
+function-like macros (or attributes). An advanced example of this is <a href="https://yew.rs/">Yew</a>'s
+<a href="https://yew.rs/concepts/html/introduction"><code>html!</code> macro</a>.</p>
+</div>
+<h2 id="syn-parsing-basics"><code>syn</code> parsing basics</h2>
+<p>In the previous article when the attribute was added, attribute parsing was a
+single line of code out of &gt;30 lines of attribute handling code:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>get_name_attr(attr: </span><span style="color:#569cd6;">&amp;</span><span>Attribute) -&gt; syn::Result&lt;Option&lt;Ident&gt;&gt; {
+</span><span>    </span><span style="color:#608b4e;">// Parsing into `syn::Meta`:
+</span><span>    </span><span style="color:#569cd6;">let</span><span> meta = attr.parse_meta()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// Pattern matching and error handling…
+</span><span>}
+</span></code></pre>
+<p>When parsing into our own type, we can avoid all of the pattern matching and
+even get some pretty good error handling "for free", but depending on the syntax
+you want to parse, the parsing code can take a little while to get right.</p>
+<p>First thing first though: We need a type to parse the <code>#[getter(name = foo)]</code>
+attribute into. Since the attribute is not mandatory and other arguments to it
+might reasonably be added in the future, we will make it a struct with an
+optional <code>name</code> field:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">struct </span><span>GetterMeta {
+</span><span>    name: Option&lt;Ident&gt;,
+</span><span>}
+</span></code></pre>
+<p>Luckily when it comes to the parsing code, all we have to parse for now is
+<code>name = &lt;identifier&gt;</code>; this is because <code>syn</code> already takes care of parsing
+the attribute's name and giving us only the argument list to parse when using
+<code>Attribute::parse_args</code>. Here's an illustration from
+<a href="https://docs.rs/syn/latest/syn/struct.Attribute.html#method.parse_args">the documentation for that method</a>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>#[my_attr(value &lt; 5)]
+</span><span>          ^^^^^^^^^ what gets parsed
+</span></code></pre>
+<p>There is a trait we have to implement to make <code>GetterMeta</code> usable with
+<code>Attribute::parse_args</code>, and it's called <code>Parse</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::parse::{Parse, ParseStream};
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Parse </span><span style="color:#569cd6;">for </span><span>GetterMeta {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>parse(input: ParseStream&lt;&#39;</span><span style="color:#569cd6;">_</span><span>&gt;) -&gt; syn::Result&lt;</span><span style="color:#569cd6;">Self</span><span>&gt; {
+</span><span>        todo!()
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Now for the actual parsing code… It is so simple you might wonder why you
+would ever bother with <code>syn::Meta</code> (spoiler: it's not always this simple).</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::{Ident, Token};
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>parse(input: ParseStream&lt;&#39;</span><span style="color:#569cd6;">_</span><span>&gt;) -&gt; syn::Result&lt;</span><span style="color:#569cd6;">Self</span><span>&gt; {
+</span><span>    </span><span style="color:#608b4e;">// Parse the argument name
+</span><span>    </span><span style="color:#569cd6;">let</span><span> arg_name: Ident = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>    </span><span style="color:#569cd6;">if</span><span> arg_name != </span><span style="color:#d69d85;">&quot;name&quot; </span><span>{
+</span><span>        </span><span style="color:#608b4e;">// Same error as before when encountering an unsupported attribute
+</span><span>        </span><span style="color:#569cd6;">return </span><span>Err(syn::Error::new_spanned(
+</span><span>            arg_name,
+</span><span>            </span><span style="color:#d69d85;">&quot;unsupported getter attribute, expected `name`&quot;</span><span>,
+</span><span>        ));
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// Parse (and discard the span of) the `=` token
+</span><span>    </span><span style="color:#569cd6;">let _</span><span>: Token</span><span style="color:#569cd6;">!</span><span>[=] = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// Parse the argument value
+</span><span>    </span><span style="color:#569cd6;">let</span><span> name = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>    Ok(</span><span style="color:#569cd6;">Self </span><span>{ name: Some(name) })
+</span><span>}
+</span></code></pre>
+<div class="info">
+<p>If you are wondering about the <code>Token</code> macro above: It is simply a nice and easy
+way to refer to the types in <code>syn</code>s <a href="https://docs.rs/syn/1.0/syn/token/index.html"><code>token</code> module</a>. See
+<a href="https://docs.rs/syn/1.0/syn/macro.Token.html">its documentation</a> for more information.</p>
+</div>
+<p>If the parsing fails, for example because of a literal instead of an identifier
+after the <code>=</code>, the error message will look like this:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: expected identifier
+</span><span> --&gt; derive_getters/tests/news_feed.rs:7:21
+</span><span>  |
+</span><span>7 |     #[getter(name = &quot;category&quot;)]
+</span><span>  |                     ^^^^^^^^^^
+</span></code></pre>
+<p>Now just update the <code>get_name_attr</code> implementation:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>get_name_attr(attr: </span><span style="color:#569cd6;">&amp;</span><span>Attribute) -&gt; syn::Result&lt;Option&lt;Ident&gt;&gt; {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> meta: GetterMeta = attr.parse_args()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>    Ok(meta.name)
+</span><span>}
+</span></code></pre>
+<p>… and parsing of <code>#[getter(name = foo)]</code> works!</p>
+<div class="info">
+<p>If you are reading this separate from <a href="/proc-macro-error-handling/">the previous article</a> and
+need a quick reminder on how this function fits in with the rest of the macro
+code, you can have a look at the full code including the changes from above
+<a href="https://github.com/jplatte/proc-macro-blog-examples/tree/544fdff61c8fa579f747acece7e21fc40fc20776/derive_getters">here</a>.</p>
+</div>
+<div class="info">
+<p>If you are interested in a small trick that allows you to change the intended
+syntax of a macro like here in a way that only shows a deprecation warning for
+uses of the previous style rather than breaking those uses, have a look at
+<a href="https://blog.turbo.fish/proc-macro-parsing/#appendix-deprecating-custom-syntax">the appendix</a> (though I recommend going
+through the rest of the article first).</p>
+</div>
+<h2 id="branching">Branching</h2>
+<p>Now that the most basic case is covered, how about something a little more
+complex? Let's say we want to add support for setting the visibility of a
+generated getter function via <code>#[getter(vis = &lt;visibility&gt;)]</code>. Of course
+specifying both a custom name and visibility at the same time should be
+supported too, in whatever order the user prefers. That means error handling
+won't be the only kind of branching needed anymore.</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Previous possibility:
+</span><span>#[getter(name </span><span style="color:#569cd6;">=</span><span> foo)]
+</span><span>field: Ty,
+</span><span>
+</span><span style="color:#608b4e;">// New possibilities: (1)
+</span><span style="color:#608b4e;">// Override only the visibility of a generated getter
+</span><span>#[getter(vis </span><span style="color:#569cd6;">= </span><span>pub(crate))]
+</span><span>field: Ty,
+</span><span>
+</span><span style="color:#608b4e;">// New possibilities: (2)
+</span><span style="color:#608b4e;">// Override name and visibility in separate attributes
+</span><span>#[getter(name </span><span style="color:#569cd6;">=</span><span> foo)]
+</span><span>#[getter(vis </span><span style="color:#569cd6;">= </span><span>pub(crate))]
+</span><span>field: Ty,
+</span><span>#[getter(vis </span><span style="color:#569cd6;">= </span><span>pub(crate))]
+</span><span>#[getter(name </span><span style="color:#569cd6;">=</span><span> foo)]
+</span><span>field: Ty,
+</span><span>
+</span><span style="color:#608b4e;">// New possibilities: (3)
+</span><span style="color:#608b4e;">// Override name and visibility in a single attribute
+</span><span>#[getter(name </span><span style="color:#569cd6;">=</span><span> foo, vis </span><span style="color:#569cd6;">= </span><span>pub(crate))]
+</span><span>field: Ty,
+</span><span>#[getter(vis </span><span style="color:#569cd6;">= </span><span>pub(crate), name </span><span style="color:#569cd6;">=</span><span> foo)]
+</span><span>field: Ty,
+</span></code></pre>
+<p>The first thing we need to do to support any of these is add another field to
+the <code>GetterMeta</code> struct:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::Visibility;
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>GetterMeta {
+</span><span>    name: Option&lt;Ident&gt;,
+</span><span>    vis: Option&lt;Visibility&gt;,
+</span><span>}
+</span></code></pre>
+<p>Adding support for case (1) doesn't require much work, the <code>Parse</code>
+implementation for <code>GetterMeta</code> simply needs one more branch:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>Parse </span><span style="color:#569cd6;">for </span><span>GetterMeta {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>parse(input: ParseStream&lt;&#39;</span><span style="color:#569cd6;">_</span><span>&gt;) -&gt; syn::Result&lt;</span><span style="color:#569cd6;">Self</span><span>&gt; {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> arg_name: Ident = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>        </span><span style="color:#569cd6;">if</span><span> arg_name == </span><span style="color:#d69d85;">&quot;name&quot; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">let _</span><span>: Token</span><span style="color:#569cd6;">!</span><span>[=] = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>            </span><span style="color:#569cd6;">let</span><span> name = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>            Ok(</span><span style="color:#569cd6;">Self </span><span>{ name: Some(name), vis: None })
+</span><span>        } </span><span style="color:#569cd6;">else if</span><span> arg_name == </span><span style="color:#d69d85;">&quot;vis&quot; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">let _</span><span>: Token</span><span style="color:#569cd6;">!</span><span>[=] = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>            </span><span style="color:#569cd6;">let</span><span> vis = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>            Ok(</span><span style="color:#569cd6;">Self </span><span>{ name: None, vis: Some(vis) })
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            Err(syn::Error::new_spanned(
+</span><span>                arg_name,
+</span><span>                </span><span style="color:#d69d85;">&quot;unsupported getter attribute, expected `name` or `vis`&quot;</span><span>,
+</span><span>            ))
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>For case (2), we introduce <code>GetterMeta::merge</code> as a way to reduce two
+<code>GetterMeta</code>s to one, raising an error if one of the arguments is provided
+multiple times:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>quote::ToTokens;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>GetterMeta {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>merge(self, other: GetterMeta) -&gt; syn::Result&lt;</span><span style="color:#569cd6;">Self</span><span>&gt; {
+</span><span>        </span><span style="color:#569cd6;">fn </span><span>either&lt;T: ToTokens&gt;(a: Option&lt;T&gt;, b: Option&lt;T&gt;) -&gt; syn::Result&lt;Option&lt;T&gt;&gt; {
+</span><span>            </span><span style="color:#569cd6;">match </span><span>(a, b) {
+</span><span>                (None, None) </span><span style="color:#569cd6;">=&gt; </span><span>Ok(None),
+</span><span>                (Some(val), None) </span><span style="color:#569cd6;">| </span><span>(None, Some(val)) </span><span style="color:#569cd6;">=&gt; </span><span>Ok(Some(val)),
+</span><span>                (Some(a), Some(b)) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                    </span><span style="color:#569cd6;">let mut</span><span> error =
+</span><span>                        syn::Error::new_spanned(a, </span><span style="color:#d69d85;">&quot;redundant attribute argument&quot;</span><span>);
+</span><span>                    error.combine(syn::Error::new_spanned(b, </span><span style="color:#d69d85;">&quot;note: first one here&quot;</span><span>));
+</span><span>                    Err(error)
+</span><span>                }
+</span><span>            }
+</span><span>        }
+</span><span>
+</span><span>        Ok(</span><span style="color:#569cd6;">Self </span><span>{
+</span><span>            name: either(self.name, other.name)</span><span style="color:#569cd6;">?</span><span>,
+</span><span>            vis: either(self.vis, other.vis)</span><span style="color:#569cd6;">?</span><span>,
+</span><span>        })
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<div class="info">
+<p>To test your error handling, have a look at the <a href="https://docs.rs/trybuild">trybuild crate</a>.</p>
+</div>
+<p>Then comes the adjustment of the actual getter method generation. Here is the
+<em>previous</em> code for that:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> attrs: Vec&lt;</span><span style="color:#569cd6;">_</span><span>&gt; =
+</span><span>    f.attrs.iter().filter(|attr| attr.path.is_ident(</span><span style="color:#d69d85;">&quot;getter&quot;</span><span>)).collect();
+</span><span>
+</span><span style="color:#569cd6;">let</span><span> name_from_attr = </span><span style="color:#569cd6;">match</span><span> attrs.len() {
+</span><span>    </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">=&gt; </span><span>None,
+</span><span>    </span><span style="color:#b5cea8;">1 </span><span style="color:#569cd6;">=&gt; </span><span>get_name_attr(attrs[</span><span style="color:#b5cea8;">0</span><span>])</span><span style="color:#569cd6;">?</span><span>,
+</span><span>    </span><span style="color:#569cd6;">_ =&gt; </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> error =
+</span><span>            syn::Error::new_spanned(attrs[</span><span style="color:#b5cea8;">1</span><span>], </span><span style="color:#d69d85;">&quot;redundant `getter(name)` attribute&quot;</span><span>);
+</span><span>        error.combine(syn::Error::new_spanned(attrs[</span><span style="color:#b5cea8;">0</span><span>], </span><span style="color:#d69d85;">&quot;note: first one here&quot;</span><span>));
+</span><span>        </span><span style="color:#569cd6;">return </span><span>Err(error);
+</span><span>    }
+</span><span>};
+</span><span>
+</span><span style="color:#569cd6;">let</span><span> method_name =
+</span><span>    name_from_attr.unwrap_or_else(|| f.ident.clone().expect(</span><span style="color:#d69d85;">&quot;a named field&quot;</span><span>));
+</span><span style="color:#569cd6;">let</span><span> field_name = f.ident;
+</span><span style="color:#569cd6;">let</span><span> field_ty = f.ty;
+</span><span>
+</span><span>Ok(quote! {
+</span><span>    </span><span style="color:#569cd6;">pub fn #</span><span>method_name(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;#</span><span>field_ty {
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self.</span><span style="color:#569cd6;">#</span><span>field_name
+</span><span>    }
+</span><span>})
+</span></code></pre>
+<p>Now that we want to check all of the attributes, we no longer need to first
+check how many <code>getter</code> attributes there are, we can simply parse all of them
+and fold them into one using the new <code>merge</code> method:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> meta: GetterMeta = f
+</span><span>    .attrs
+</span><span>    .iter()
+</span><span>    .filter(|attr| attr.path.is_ident(</span><span style="color:#d69d85;">&quot;getter&quot;</span><span>))
+</span><span>    </span><span style="color:#608b4e;">// First create an initial empty GetterMeta (using a derived Default impl).
+</span><span>    </span><span style="color:#608b4e;">// Then try parsing the attributes one-by-one and merging them into that
+</span><span>    </span><span style="color:#608b4e;">// instance, stopping if there is an errors from either `.parse_args()` or
+</span><span>    </span><span style="color:#608b4e;">// `.merge()` and propagating the first error (if any) out of this code with
+</span><span>    </span><span style="color:#608b4e;">// the second `?`.
+</span><span>    .try_fold(GetterMeta::default(), |meta, attr| meta.merge(attr.parse_args()</span><span style="color:#569cd6;">?</span><span>))</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span style="color:#608b4e;">// Extract visibility argument in addition to name (falling back to `pub`)
+</span><span style="color:#569cd6;">let</span><span> visibility = meta.vis.unwrap_or_else(|| parse_quote! { </span><span style="color:#569cd6;">pub </span><span>});
+</span><span style="color:#569cd6;">let</span><span> method_name =
+</span><span>    meta.name.unwrap_or_else(|| f.ident.clone().expect(</span><span style="color:#d69d85;">&quot;a named field&quot;</span><span>));
+</span><span style="color:#569cd6;">let</span><span> field_name = f.ident;
+</span><span style="color:#569cd6;">let</span><span> field_ty = f.ty;
+</span><span>
+</span><span>Ok(quote! {
+</span><span>    </span><span style="color:#608b4e;">// vvvvv Usage of visibility argument
+</span><span>    </span><span style="color:#569cd6;">#</span><span>visibility </span><span style="color:#569cd6;">fn #</span><span>method_name(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;#</span><span>field_ty {
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self.</span><span style="color:#569cd6;">#</span><span>field_name
+</span><span>    }
+</span><span>})
+</span></code></pre>
+<p>There's of course many alternative ways to solve this, but I found <code>try_fold</code> to
+be the most elegant solution after some experimentation.</p>
+<p>Now onto case (3)…</p>
+<h2 id="lists">Lists</h2>
+<p>One way of dealing with the case of multiple arguments in one attribute would be
+to write a parsing loop and call <code>input.parse()?</code> for the list delimiters like
+for the argument names, <code>=</code> tokens and argument values. However, it is often
+easier to use syn's <a href="https://docs.rs/syn/latest/syn/punctuated/struct.Punctuated.html"><code>Punctuated</code></a> type for this, which is similar to a <code>Vec</code>
+except it has a second generic argument for a delimiter that separates list
+elements and can be used for parsing through a few associated functions.</p>
+<p>Depending on the task at hand, we might want to create an enum that represents a
+single argument to the derive macro, but in this case we can just reuse the
+existing logic and simply parse a <code>GetterMeta</code> that always has exactly one field
+set to <code>Some</code>, then use the <code>merge</code> function created above to collect them into
+a <code>GetterMeta</code> with all the arguments for a given field.</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Before
+</span><span>.try_fold(GetterMeta::default(), |meta, attr| meta.merge(attr.parse_args()</span><span style="color:#569cd6;">?</span><span>))</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span style="color:#608b4e;">/// After
+</span><span style="color:#569cd6;">use </span><span>syn::punctuated::Punctuated;
+</span><span>
+</span><span>.try_fold(GetterMeta::default(), |meta, attr| {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> list: Punctuated&lt;GetterMeta, Token</span><span style="color:#ff3333;">!</span><span>[,]&gt; =
+</span><span>        attr.parse_args_with(Punctuated::parse_terminated)</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>    list.into_iter().try_fold(meta, GetterMeta::merge)
+</span><span>})</span><span style="color:#569cd6;">?</span><span>;
+</span></code></pre>
+<h2 id="lookahead">Lookahead</h2>
+<p>One more thing I want to go over before concluding this article is lookahead. In
+the <code>GetterMeta</code> parsing code above, we started off by parsing an identifier
+because regardless of whether we are parsing a name or visibility argument, it
+starts with <code>name</code> or <code>vis</code> which can both be parsed to <code>Ident</code>.</p>
+<p>However, <code>syn</code> also provides ways of trying different parsers on the next token
+in the input in the form of <a href="https://docs.rs/syn/1.0/syn/parse/struct.ParseBuffer.html#method.lookahead1"><code>ParseStream::lookahead1</code></a>. This even
+applies to our case since what we really want to do is parse either exactly
+<code>name</code>, or exactly <code>vis</code>; not an arbitrary identifier. We can create custom
+keyword types for each using <a href="https://docs.rs/syn/1.0/syn/macro.custom_keyword.html">the <code>custom_keyword</code> macro</a> and
+then try parsing each of them:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">mod </span><span>kw {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>syn::custom_keyword;
+</span><span>
+</span><span>    custom_keyword!(name);
+</span><span>    custom_keyword!(vis);
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Parse </span><span style="color:#569cd6;">for </span><span>GetterMeta {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>parse(input: ParseStream&lt;&#39;</span><span style="color:#569cd6;">_</span><span>&gt;) -&gt; syn::Result&lt;</span><span style="color:#569cd6;">Self</span><span>&gt; {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> lookahead = input.lookahead1();
+</span><span>        </span><span style="color:#569cd6;">if</span><span> lookahead.peek(kw::name) {
+</span><span>            </span><span style="color:#569cd6;">let _</span><span>: kw::name = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>            </span><span style="color:#569cd6;">let _</span><span>: Token</span><span style="color:#569cd6;">!</span><span>[=] = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>            </span><span style="color:#569cd6;">let</span><span> name = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>            Ok(</span><span style="color:#569cd6;">Self </span><span>{ name: Some(name), vis: None })
+</span><span>        } </span><span style="color:#569cd6;">else if</span><span> lookahead.peek(kw::vis) {
+</span><span>            </span><span style="color:#569cd6;">let _</span><span>: kw::vis = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>            </span><span style="color:#569cd6;">let _</span><span>: Token</span><span style="color:#569cd6;">!</span><span>[=] = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>            </span><span style="color:#569cd6;">let</span><span> vis = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>            Ok(</span><span style="color:#569cd6;">Self </span><span>{ name: None, vis: Some(vis) })
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            </span><span style="color:#608b4e;">// … and we get an appropriate error message for free!
+</span><span>            Err(lookahead.error())
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<h2 id="enough-for-today">Enough for today?</h2>
+<p>That's all that I can think of as being important to know about parsing custom
+syntax with <code>syn</code>. Like in the second article of this series, there's a appendix
+here with some tangentially related topics that you might find interesting (so
+this article does not end here), but I hope you now have an idea of how to write
+your own proc-macro parsing code!</p>
+<p>As always, you can review the code shown in this article as a working crate:</p>
+<ul>
+<li><a href="https://github.com/jplatte/proc-macro-blog-examples/tree/parsing-v1/derive_getters">Complete code</a></li>
+<li><a href="https://github.com/jplatte/proc-macro-blog-examples/compare/error-handling-v1...parsing-v1">Individual commits</a></li>
+</ul>
+<p>Although it has taken more than half a year from the last article to this one, I
+still plan to add at least an article about
+<span class="abbrev" title="abstract syntax tree">AST</span> traversal and
+possibly one more after that one. See you next time!</p>
+<p><em>If you have comments about this article, you can leave them in any of these
+places: <a href="https://www.reddit.com/r/rust/comments/roaofg/procedural_macros_parsing_custom_syntax/">reddit</a>, <a href="https://lemmy.ml/post/128393">Lemmy</a>, <a href="https://users.rust-lang.org/t/blog-post-procedural-macros-parsing-custom-syntax/69400?u=jplatte">users.rust-lang.org</a> or <a href="https://twitter.com/_jplatte/status/1474747780937756675">Twitter</a>.</em></p>
+<h2 id="appendix-deprecating-custom-syntax">Appendix: Deprecating custom syntax</h2>
+<p>Here's one more small sub-scenario: Suppose you have already released <code>getters</code>
+v1.0.0 with <code>#[getters(name = "foo")]</code> attributes and don't want to do another
+breaking-change release soon. Yet you want to allow the new syntax without the
+quotes and deprecate the old one. Using <code>.lookahead1()</code> on the input as in the
+<a href="https://blog.turbo.fish/proc-macro-parsing/#lookahead">Lookahead</a> section above, it is pretty straight-forward to allow
+both an identifier and a string literal in parsing:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Inside the `kw::name` branch:
+</span><span style="color:#569cd6;">let _</span><span>: kw::name = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span style="color:#569cd6;">let _</span><span>: Token</span><span style="color:#569cd6;">!</span><span>[=] = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span style="color:#608b4e;">// New: Parse identifier either directly or from string literal
+</span><span style="color:#569cd6;">let</span><span> lookahead = input.lookahead1();
+</span><span style="color:#569cd6;">let </span><span>(name, deprecated_name_syntax) = </span><span style="color:#569cd6;">if</span><span> lookahead.peek(Ident) {
+</span><span>    (input.parse()</span><span style="color:#569cd6;">?</span><span>, </span><span style="color:#569cd6;">false</span><span>)
+</span><span>} </span><span style="color:#569cd6;">else if</span><span> lookahead.peek(LitStr) {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> s: LitStr = input.parse()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>    </span><span style="color:#569cd6;">let</span><span> span = s.span(); </span><span style="color:#608b4e;">// We will need this span for error reporting
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> name: Ident =
+</span><span>        syn::parse_str(</span><span style="color:#569cd6;">&amp;</span><span>s.value()).map_err(|e| syn::Error::new_spanned(s, e))</span><span style="color:#569cd6;">?</span><span>;
+</span><span>    name.set_span(span);
+</span><span>
+</span><span>    (name, </span><span style="color:#569cd6;">true</span><span>)
+</span><span>} </span><span style="color:#569cd6;">else </span><span>{
+</span><span>    </span><span style="color:#569cd6;">return </span><span>Err(lookahead.error());
+</span><span>};
+</span><span>
+</span><span>Ok(</span><span style="color:#569cd6;">Self </span><span>{ name: Some(name), vis: None })
+</span></code></pre>
+<p>Deprecating the one form now just requires a little extra trick: First we
+capture whether the deprecated name syntax was used in <code>GetterMeta</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">struct </span><span>GetterMeta {
+</span><span>    name: Option&lt;Ident&gt;,
+</span><span>    vis: Option&lt;Visibility&gt;,
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// Set this to true through the `LitStr` branch
+</span><span>    deprecated_name_syntax: </span><span style="color:#569cd6;">bool</span><span>,
+</span><span>}
+</span></code></pre>
+<p>… and then emitting the deprecation warning if that flag is set by generating a
+call to a deprecated function that uses the span of that attribute:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> deprecation_note = meta.deprecated_name_syntax.then(|| {
+</span><span>    quote_spanned! {method_name</span><span style="color:#569cd6;">=&gt;
+</span><span>        #[deprecated </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;Using a string literal as a name attribute is deprecated.\
+</span><span style="color:#d69d85;">            Use an identifier instead (remove the quotes).&quot;</span><span>]
+</span><span>        </span><span style="color:#569cd6;">fn </span><span>name_literal() {}
+</span><span>        name_literal();
+</span><span>    }
+</span><span>});
+</span><span>
+</span><span>Ok(quote! {
+</span><span>    </span><span style="color:#569cd6;">#</span><span>visibility </span><span style="color:#569cd6;">fn #</span><span>method_name(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;#</span><span>field_ty {
+</span><span>        </span><span style="color:#569cd6;">#</span><span>deprecation_note
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self.</span><span style="color:#569cd6;">#</span><span>field_name
+</span><span>    }
+</span><span>})
+</span></code></pre>
+<p>This is what a warning generated this way will look like:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>warning: use of deprecated function `NewsFeed::category::name_literal`: Using a string literal as a name attribute is deprecated. Use an identifier instead (remove the quotes).
+</span><span> --&gt; derive_getters/tests/news_feed.rs:7:21
+</span><span>  |
+</span><span>7 |     #[getter(name = &quot;category&quot;)]
+</span><span>  |                     ^^^^^^^^^^
+</span><span>  |
+</span><span>  = note: `#[warn(deprecated)]` on by default
+</span></code></pre>
+
+</article>
+
+<ul class="other-post-links">
+    
+    <li class="previous-post">
+        <small>Previous post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-error-handling&#x2F;">Procedural Macros: Error handling</a>
+    </li>
+    
+    
+</ul>
+
+
+        <div class="bg" aria-hidden="true" tabindex="-1">
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+        </div>
+    </div>
+
+    <aside class="sidebar">
+    <small>This blog is written by</small>
+    <div class="author">
+        <img class="author-icon" src="&#x2F;img&#x2F;jplatte.png" alt="">
+        <span class="author-name">Jonas Platte</span>
+    </div>
+
+    <div class="about">
+        <p>I am the creator of <a href="https://turbo.fish/">turbo.fish</a> and <a href="https://caniuse.rs/">caniuse.rs</a>. You may also know me
+because of my involvement with the <a href="https://ruma.dev/">Ruma</a> project.</p>
+
+    </div>
+
+    <ul class="ext-links">
+    
+        <li>
+            <small>sourcehut</small><br>
+            <a href="https:&#x2F;&#x2F;git.sr.ht&#x2F;~jplatte&#x2F;">~jplatte</a>
+        </li>
+    
+        <li>
+            <small>github</small><br>
+            <a href="https:&#x2F;&#x2F;github.com&#x2F;jplatte">jplatte</a>
+        </li>
+    
+        <li>
+            <small>liberapay</small><br>
+            <a href="https:&#x2F;&#x2F;liberapay.com&#x2F;jplatte&#x2F;">jplatte</a>
+        </li>
+    
+    </ul>
+
+    <div class="rss">
+        <a href="/rss.xml"><svg viewBox="0 0 1536 1536" width="13" height="13" xmlns="http://www.w3.org/2000/svg">
+    <title>News feed (Atom)</title>
+    <path d="M384 1344c0 106-86 192-192 192S0 1450 0 1344s86-192 192-192 192 86 192 192zm512 123c1 18-5 35-17 48-12 14-29 21-47 21H697c-33 0-60-25-63-58-29-305-271-547-576-576-33-3-58-30-58-63V704c0-18 7-35 21-47 11-11 27-17 43-17h5c213 17 414 110 565 262 152 151 245 352 262 565zm512 2c1 17-5 34-18 47-12 13-28 20-46 20h-143c-34 0-62-26-64-60C1104 895 641 432 60 398c-34-2-60-30-60-63V192c0-18 7-34 20-46 12-12 28-18 44-18h3c350 18 679 165 927 414 249 248 396 577 414 927z"/>
+</svg>RSS Feed</a>
+    </div>
+
+    <div class="sidebar-footer">
+        <small>Built using <a href="https://www.getzola.org/">Zola</a></small>
+    </div>
+</aside>
+
+</div>
+
+</html>

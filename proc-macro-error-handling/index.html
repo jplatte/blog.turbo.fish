@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en" class="index">
+
+<meta charset="utf-8">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="alternate" type="application/rss+xml" href="/rss.xml" title="blog.turbo.fish">
+
+<meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'none';
+    style-src 'self' 'unsafe-inline';
+    frame-src 'none'
+    
+">
+
+<title>Procedural Macros: Error handling | blog.turbo.fish</title>
+
+<link rel="stylesheet" href="/normalize.css">
+<link rel="stylesheet" href="/blog.css">
+
+<div class="page">
+    <div class="content">
+        
+
+<article>
+    <h1 class="page-title">Procedural Macros: Error handling</h1>
+    <small class="post-meta">
+        Published
+        <time datetime="2021-05-11">2021-05-11</time>
+        on
+        <a href="/">blog.turbo.fish</a>
+    </small>
+    
+    <p>This is the third article in my series about procedural macros. The examples
+here are based on the <code>Getters</code> derive macro from <a href="/proc-macro-simple-derive/">the previous article</a>.</p>
+<p>As the title says, this time I'll explain error handling, specifically how to
+use <code>syn::Error</code> to produce errors that will be shown by the compiler as
+originating somewhere in the macro input, rather than pointing at the macro
+invocation.</p>
+<h2 id="a-use-case">A use case</h2>
+<p>Before we can start adding meaningful spans to parts of the macro input, there
+has to be the possibility for errors other than those already caught by the
+Rust compiler itself. Luckily, there is a common way in which the input of a
+derive macro can be wrong in a way specific to that macro, so I can continue on
+with the previous <code>Getters</code> example rather than coming up with, and explaining,
+a new function-like or attribute proc-macro.</p>
+<p>That common possibility for errors is attributes: Many derive macros come with
+their own attribute(s), and generally they emit an error when one such attribute
+is used incorrectly. For the <code>Getters</code> macro there is one obvious (to me)
+customization possibility that an attribute would enable: Renaming. As such, we
+will add a <code>getter</code> field attribute that is used as <code>#[getter(name = "foo")]</code>.</p>
+<h2 id="registering-the-attribute">Registering the attribute</h2>
+<p>The first thing that has to be done before starting to look for attributes in
+the <code>DeriveInput</code> is registering the attribute. By default if <code>rustc</code> encounters
+an unknown attribute, <a href="https://www.reddit.com/r/rustjerk/comments/n7b1gu">that is an error</a>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: cannot find attribute `getter` in this scope
+</span><span>  --&gt; src/ratchet/keys.rs:15:7
+</span><span>   |
+</span><span>15 |     #[getter(name = &quot;init_vec&quot;)]
+</span><span>   |       ^^^^^^
+</span></code></pre>
+<p>Making that error disappear is as simple as updating the <code>#[proc_macro_derive]</code>
+attribute on our proc-macro entry point:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[proc_macro_derive(Getters, attributes(getter))]
+</span><span style="color:#608b4e;">//                           ^^^^^^^^^^^^^^^^^^ this is new
+</span><span style="color:#569cd6;">pub fn </span><span>getters(input: TokenStream) -&gt; TokenStream {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> input = parse_macro_input!(input </span><span style="color:#569cd6;">as</span><span> DeriveInput);
+</span><span>    expand_getters(input).into()
+</span><span>}
+</span></code></pre>
+<h2 id="parsing-the-attribute">Parsing the attribute</h2>
+<p>Since custom parsing is complex enough to deserve its own article, I'm going to
+use <code>syn::Attribute::parse_meta</code> here, which is sufficient for the syntax shown
+above.</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Note: syn::Ident is a re-export of proc_macro2::Ident
+</span><span style="color:#569cd6;">use </span><span>syn::{Attribute, Ident};
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>get_name_attr(attr: </span><span style="color:#569cd6;">&amp;</span><span>Attribute) -&gt; syn::Result&lt;Option&lt;Ident&gt;&gt; {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> meta = attr.parse_meta()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>    todo!()
+</span><span>}
+</span></code></pre>
+<p>The <code>syn::Result&lt;T&gt;</code> type above is simply a type alias for
+<code>Result&lt;T, syn::Error&gt;</code>. Since <code>syn</code>s <code>Meta</code> type can only represent a limited
+subset of the arbitrary token trees allowed within attributes, parsing it is
+fallible, and returns <code>syn::Result&lt;syn::Meta&gt;</code>.</p>
+<p>Luckily detecting whether an attribute is possible without calling any of
+<code>Attribute</code>s <code>parse_</code> methods, so we can detect whether the attribute is for us
+before executing this fallible operation.</p>
+<p>But I'm getting ahead of myself… First, let's add more to our new function.
+Here is what the most common way of constructing a <code>syn::Error</code> looks like (for
+me at least):</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::Meta;
+</span><span>
+</span><span style="color:#569cd6;">let</span><span> meta_list = </span><span style="color:#569cd6;">match</span><span> meta {
+</span><span>    Meta::List(list) </span><span style="color:#569cd6;">=&gt;</span><span> list,
+</span><span>    </span><span style="color:#608b4e;">// *Almost* equivalent (see syn documentation) to:
+</span><span>    </span><span style="color:#608b4e;">// use syn::spanned::Spanned;
+</span><span>    </span><span style="color:#608b4e;">//   return Err(syn::Error::new(meta.span(), &quot;expected a list-style attribute&quot;))
+</span><span>    </span><span style="color:#569cd6;">_ =&gt; return </span><span>Err(syn::Error::new_spanned(meta, </span><span style="color:#d69d85;">&quot;expected a list-style attribute&quot;</span><span>)),
+</span><span>};
+</span></code></pre>
+<p>As you can see, creating a <code>syn::Error</code> is nothing special.</p>
+<p>The rest of <code>get_name_attr</code> works in much the same way:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::{Lit, NestedMeta};
+</span><span>
+</span><span style="color:#569cd6;">let</span><span> nested = </span><span style="color:#569cd6;">match</span><span> meta_list.nested.len() {
+</span><span>    </span><span style="color:#608b4e;">// `#[getter()]` without any arguments is a no-op
+</span><span>    </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">=&gt; return </span><span>Ok(None),
+</span><span>    </span><span style="color:#b5cea8;">1 </span><span style="color:#569cd6;">=&gt; &amp;</span><span>meta_list.nested[</span><span style="color:#b5cea8;">0</span><span>],
+</span><span>    </span><span style="color:#569cd6;">_ =&gt; </span><span>{
+</span><span>        </span><span style="color:#569cd6;">return </span><span>Err(syn::Error::new_spanned(
+</span><span>            meta_list.nested,
+</span><span>            </span><span style="color:#d69d85;">&quot;currently only a single getter attribute is supported&quot;</span><span>,
+</span><span>        ));
+</span><span>    }
+</span><span>};
+</span><span>
+</span><span style="color:#569cd6;">let</span><span> name_value = </span><span style="color:#569cd6;">match</span><span> nested {
+</span><span>    NestedMeta::Meta(Meta::NameValue(nv)) </span><span style="color:#569cd6;">=&gt;</span><span> nv,
+</span><span>    </span><span style="color:#569cd6;">_ =&gt; return </span><span>Err(syn::Error::new_spanned(nested, </span><span style="color:#d69d85;">&quot;expected `name = </span><span style="color:#e3bbab;">\&quot;</span><span style="color:#d69d85;">&lt;value&gt;</span><span style="color:#e3bbab;">\&quot;</span><span style="color:#d69d85;">`&quot;</span><span>)),
+</span><span>};
+</span><span>
+</span><span style="color:#569cd6;">if !</span><span>name_value.path.is_ident(</span><span style="color:#d69d85;">&quot;name&quot;</span><span>) {
+</span><span>    </span><span style="color:#608b4e;">// Could also silently ignore the unexpected attribute by returning `Ok(None)`
+</span><span>    </span><span style="color:#569cd6;">return </span><span>Err(syn::Error::new_spanned(
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>name_value.path,
+</span><span>        </span><span style="color:#d69d85;">&quot;unsupported getter attribute, expected `name`&quot;</span><span>,
+</span><span>    ));
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">match &amp;</span><span>name_value.lit {
+</span><span>    Lit::Str(s) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>        </span><span style="color:#608b4e;">// Parse string contents to `Ident`, reporting an error on the string
+</span><span>        </span><span style="color:#608b4e;">// literal&#39;s span if parsing fails
+</span><span>        syn::parse_str(</span><span style="color:#569cd6;">&amp;</span><span>s.value()).map_err(|e| syn::Error::new_spanned(s, e))
+</span><span>    }
+</span><span>    lit </span><span style="color:#569cd6;">=&gt; </span><span>Err(syn::Error::new_spanned(lit, </span><span style="color:#d69d85;">&quot;expected string literal&quot;</span><span>)),
+</span><span>}
+</span></code></pre>
+<h2 id="adjusting-the-existing-codegen">Adjusting the existing codegen</h2>
+<p>Now we have a new method to parse <code>#[getter]</code> attributes, but we aren't using it
+yet. We need to update the existing code generation logic to take these
+attributes into account, and the first step towards that is making the
+<code>expand_getters</code> function fallible as well.</p>
+<p>If it's been some time since you read the last article, here is its signature
+again (you can also review the entire definition <a href="https://blog.turbo.fish/proc-macro-error-handling/simple-derive-v1">here</a>):</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>expand_getters(input: DeriveInput) -&gt; TokenStream {
+</span></code></pre>
+<p>Which now becomes</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>expand_getters(input: DeriveInput) -&gt; syn::Result&lt;TokenStream&gt; {
+</span></code></pre>
+<p>The new <code>expand_getters</code> implementation is a bit longer, but still manageable:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Same as before
+</span><span style="color:#569cd6;">let</span><span> fields = </span><span style="color:#569cd6;">match</span><span> input.data {
+</span><span>    Data::Struct(DataStruct { fields: Fields::Named(fields), </span><span style="color:#569cd6;">.. </span><span>}) </span><span style="color:#569cd6;">=&gt;</span><span> fields.named,
+</span><span>    </span><span style="color:#569cd6;">_ =&gt; </span><span>panic!(</span><span style="color:#d69d85;">&quot;this derive macro only works on structs with named fields&quot;</span><span>),
+</span><span>};
+</span><span>
+</span><span style="color:#608b4e;">// All the new logic comes in here
+</span><span style="color:#569cd6;">let</span><span> getters = fields
+</span><span>    .into_iter()
+</span><span>    .map(|f| {
+</span><span>        </span><span style="color:#608b4e;">// Collect getter attributes
+</span><span>        </span><span style="color:#569cd6;">let</span><span> attrs: Vec&lt;</span><span style="color:#569cd6;">_</span><span>&gt; =
+</span><span>            </span><span style="color:#608b4e;">// This `.filter` is how we make sure to ignore builtin attributes, or
+</span><span>            </span><span style="color:#608b4e;">// ones meant for consumption by different proc-macros.
+</span><span>            f.attrs.iter().filter(|attr| attr.path.is_ident(</span><span style="color:#d69d85;">&quot;getter&quot;</span><span>)).collect();
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">let</span><span> name_from_attr = </span><span style="color:#569cd6;">match</span><span> attrs.len() {
+</span><span>            </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">=&gt; </span><span>None,
+</span><span>            </span><span style="color:#b5cea8;">1 </span><span style="color:#569cd6;">=&gt; </span><span>get_name_attr(attrs[</span><span style="color:#b5cea8;">0</span><span>])</span><span style="color:#569cd6;">?</span><span>,
+</span><span>            </span><span style="color:#608b4e;">// Since `#[getter(name = ...)]` is the only available `getter` attribute,
+</span><span>            </span><span style="color:#608b4e;">// we can just assume any attribute with `path.is_ident(&quot;getter&quot;)` is a
+</span><span>            </span><span style="color:#608b4e;">// `getter(name)` attribute.
+</span><span>            </span><span style="color:#608b4e;">//
+</span><span>            </span><span style="color:#608b4e;">// Thus, if there is two `getter` attributes, there is a redundancy
+</span><span>            </span><span style="color:#608b4e;">// which we should report as an error.
+</span><span>            </span><span style="color:#608b4e;">//
+</span><span>            </span><span style="color:#608b4e;">// On nightly, you could also choose to report a warning and just use one
+</span><span>            </span><span style="color:#608b4e;">// of the attributes, but emitting a warning from a proc-macro is not
+</span><span>            </span><span style="color:#608b4e;">// stable at the time of writing.
+</span><span>            </span><span style="color:#569cd6;">_ =&gt; </span><span>{
+</span><span>                </span><span style="color:#569cd6;">let mut</span><span> error = syn::Error::new_spanned(
+</span><span>                    attrs[</span><span style="color:#b5cea8;">1</span><span>],
+</span><span>                    </span><span style="color:#d69d85;">&quot;redundant `getter(name)` attribute&quot;</span><span>,
+</span><span>                );
+</span><span>                </span><span style="color:#608b4e;">// `syn::Error::combine` can be used to create an error that spans
+</span><span>                </span><span style="color:#608b4e;">// multiple independent parts of the macro input.
+</span><span>                error.combine(
+</span><span>                    syn::Error::new_spanned(attrs[</span><span style="color:#b5cea8;">0</span><span>], </span><span style="color:#d69d85;">&quot;note: first one here&quot;</span><span>),
+</span><span>                );
+</span><span>                </span><span style="color:#569cd6;">return </span><span>Err(error);
+</span><span>            }
+</span><span>        };
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// If there is no `getter(name)` attribute, use the field name like before
+</span><span>        </span><span style="color:#569cd6;">let</span><span> method_name =
+</span><span>            name_from_attr.unwrap_or_else(|| f.ident.clone().expect(</span><span style="color:#d69d85;">&quot;a named field&quot;</span><span>));
+</span><span>        </span><span style="color:#569cd6;">let</span><span> field_name = f.ident;
+</span><span>        </span><span style="color:#569cd6;">let</span><span> field_ty = f.ty;
+</span><span>
+</span><span>        Ok(quote! {
+</span><span>            </span><span style="color:#569cd6;">pub fn #</span><span>method_name(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;#</span><span>field_ty {
+</span><span>                </span><span style="color:#569cd6;">&amp;</span><span>self.</span><span style="color:#569cd6;">#</span><span>field_name
+</span><span>            }
+</span><span>        })
+</span><span>    })
+</span><span>    </span><span style="color:#608b4e;">// Since `TokenStream` implements `FromIterator&lt;TokenStream&gt;`, concatenating an
+</span><span>    </span><span style="color:#608b4e;">// iterator of token streams without a separator can be using `.collect()` in
+</span><span>    </span><span style="color:#608b4e;">// addition to `quote! { #(#iter)* }`. Through std&#39;s `FromIterator` impl for
+</span><span>    </span><span style="color:#608b4e;">// `Result`, we get short-circuiting on errors on top.
+</span><span>    .collect::&lt;syn::Result&lt;TokenStream&gt;&gt;()</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span style="color:#608b4e;">// Like before
+</span><span style="color:#569cd6;">let</span><span> st_name = input.ident;
+</span><span style="color:#569cd6;">let </span><span>(impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+</span><span>
+</span><span style="color:#608b4e;">// Resulting TokenStream wrapped in Ok
+</span><span>Ok(quote! {
+</span><span>    #[automatically_derived]
+</span><span>    </span><span style="color:#569cd6;">impl </span><span>#impl_generics #st_name #ty_generics #where_clause {
+</span><span>        </span><span style="color:#608b4e;">// Previously: #(#getters)*
+</span><span>        </span><span style="color:#608b4e;">//
+</span><span>        </span><span style="color:#608b4e;">// Now we don&#39;t need that anymore since we already
+</span><span>        </span><span style="color:#608b4e;">// collected the getters into a TokenStream above
+</span><span>        </span><span style="color:#569cd6;">#</span><span>getters
+</span><span>    }
+</span><span>})
+</span></code></pre>
+<div class="info">
+<p>If this is the first time you have seen <code>.collect::&lt;Result&lt;_, _&gt;&gt;</code>, you can find the documentation
+for the trait implementation that makes it possible <a href="https://doc.rust-lang.org/std/result/enum.Result.html#impl-FromIterator%3CResult%3CA%2C%20E%3E%3E-for-Result%3CV%2C%20E%3E">here</a>.</p>
+</div>
+<h2 id="passing-a-syn-error-to-the-compiler">Passing a <code>syn::Error</code> to the compiler</h2>
+<p>One final piece of the puzzle is missing: How does <code>syn::Error</code> become a
+compiler error? We can't update our proc-macro entry point to return
+<code>syn::Result</code>, that would result in an error because proc-macro entry points are
+required to return just a <code>TokenStream</code>.</p>
+<p>However, the solution is almost as easy and you might already have seen it if
+you had a look at <code>syn::Error</code>s <a href="https://docs.rs/syn/1.0/syn/parse/struct.Error.html">documentation</a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Previously, with expand_getters returning proc_macro2::TokenStream
+</span><span>expand_getters(input).into()
+</span><span style="color:#608b4e;">// Now, returning syn::Result&lt;proc_macro2::TokenStream&gt;
+</span><span>expand_getters(input).unwrap_or_else(syn::Error::into_compile_error).into()
+</span></code></pre>
+<p>What this does under the hood is actually kind of weird: It produces a
+TokenStream like</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>quote! { compile_error!(</span><span style="color:#d69d85;">&quot;[user-provided error message]&quot;</span><span>); }
+</span></code></pre>
+<p>but with the span being the one given when constructing the <code>syn::Error</code>. As
+weird as it is, that's simply the only way to raise a custom compiler error on
+stable (as of the time of writing).</p>
+<div class="info">
+<p>If you haven't seen <code>compile_error!</code> before, it's a <a href="https://doc.rust-lang.org/std/macro.compile_error.html">builtin macro</a>.</p>
+</div>
+<h2 id="and-that-s-it">And that's it!</h2>
+<p>That's all there really is when it comes to proc-macro specific error handling
+knowledge. Like last time, you can review the changes from this blog post in the
+accompanying repo:</p>
+<ul>
+<li><a href="https://github.com/jplatte/proc-macro-blog-examples/tree/error-handling-v1/derive_getters">Complete code</a></li>
+<li><a href="https://github.com/jplatte/proc-macro-blog-examples/compare/simple-derive-v1...error-handling-v1">Individual commits</a></li>
+</ul>
+<p>If you want to practice your proc-macro skills but haven't come up with anything
+to create or contribute to at this point, I recommend having a look at David
+Tolnay's <a href="https://github.com/dtolnay/proc-macro-workshop#readme">proc-macro-workshop</a>.</p>
+<p>Next time, I will explain how to parse custom syntax, which can be useful for
+derive macros when you want to go beyond what <code>syn::Meta</code> allows, and is crucial
+for many attribute macros as well as the majority of function-like proc-macros.
+Stay tuned!</p>
+
+</article>
+
+<ul class="other-post-links">
+    
+    <li class="previous-post">
+        <small>Previous post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-simple-derive&#x2F;">Procedural Macros: A simple derive macro</a>
+    </li>
+    
+    
+    <li class="next-post">
+        <small>Next post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-parsing&#x2F;">Procedural Macros: Parsing custom syntax</a>
+    </li>
+    
+</ul>
+
+
+        <div class="bg" aria-hidden="true" tabindex="-1">
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+        </div>
+    </div>
+
+    <aside class="sidebar">
+    <small>This blog is written by</small>
+    <div class="author">
+        <img class="author-icon" src="&#x2F;img&#x2F;jplatte.png" alt="">
+        <span class="author-name">Jonas Platte</span>
+    </div>
+
+    <div class="about">
+        <p>I am the creator of <a href="https://turbo.fish/">turbo.fish</a> and <a href="https://caniuse.rs/">caniuse.rs</a>. You may also know me
+because of my involvement with the <a href="https://ruma.dev/">Ruma</a> project.</p>
+
+    </div>
+
+    <ul class="ext-links">
+    
+        <li>
+            <small>sourcehut</small><br>
+            <a href="https:&#x2F;&#x2F;git.sr.ht&#x2F;~jplatte&#x2F;">~jplatte</a>
+        </li>
+    
+        <li>
+            <small>github</small><br>
+            <a href="https:&#x2F;&#x2F;github.com&#x2F;jplatte">jplatte</a>
+        </li>
+    
+        <li>
+            <small>liberapay</small><br>
+            <a href="https:&#x2F;&#x2F;liberapay.com&#x2F;jplatte&#x2F;">jplatte</a>
+        </li>
+    
+    </ul>
+
+    <div class="rss">
+        <a href="/rss.xml"><svg viewBox="0 0 1536 1536" width="13" height="13" xmlns="http://www.w3.org/2000/svg">
+    <title>News feed (Atom)</title>
+    <path d="M384 1344c0 106-86 192-192 192S0 1450 0 1344s86-192 192-192 192 86 192 192zm512 123c1 18-5 35-17 48-12 14-29 21-47 21H697c-33 0-60-25-63-58-29-305-271-547-576-576-33-3-58-30-58-63V704c0-18 7-35 21-47 11-11 27-17 43-17h5c213 17 414 110 565 262 152 151 245 352 262 565zm512 2c1 17-5 34-18 47-12 13-28 20-46 20h-143c-34 0-62-26-64-60C1104 895 641 432 60 398c-34-2-60-30-60-63V192c0-18 7-34 20-46 12-12 28-18 44-18h3c350 18 679 165 927 414 249 248 396 577 414 927z"/>
+</svg>RSS Feed</a>
+    </div>
+
+    <div class="sidebar-footer">
+        <small>Built using <a href="https://www.getzola.org/">Zola</a></small>
+    </div>
+</aside>
+
+</div>
+
+</html>

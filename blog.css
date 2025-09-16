@@ -1,0 +1,363 @@
+@font-face {
+    font-family: 'Inter';
+    font-display: swap;
+    src: url('fonts/Inter-Regular.woff2') format('woff2'),
+         url('fonts/Inter-Regular.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'Inter';
+    font-style: italic;
+    font-display: swap;
+    src: url('fonts/Inter-Italic.woff2') format('woff2'),
+         url('fonts/Inter-Italic.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'Inter';
+    font-weight: 500;
+    font-display: swap;
+    src: url('fonts/Inter-Medium.woff2') format('woff2'),
+         url('fonts/Inter-Medium.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'Inter';
+    font-weight: 600;
+    font-display: swap;
+    src: url('fonts/Inter-SemiBold.woff2') format('woff2'),
+         url('fonts/Inter-SemiBold.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'Inter';
+    font-weight: 700;
+    font-display: swap;
+    src: url('fonts/Inter-Bold.woff2') format('woff2'),
+         url('fonts/Inter-Bold.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'Droid Sans Mono';
+    src: url('fonts/DroidSansMono.woff') format('woff');
+}
+
+/* Basic layout */
+html {
+    box-sizing: border-box;
+}
+
+*, *:before, *:after {
+    box-sizing: inherit;
+}
+
+html {
+    height: 100%;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    font-size: 14pt;
+    min-height: 100%;
+    background-color: #111;
+    color: #fff;
+}
+
+.page {
+    min-height: 100vh;
+    max-width: 1300px;
+    margin: 0 auto;
+    display: flex;
+}
+
+h1.page-title {
+    font-weight: 600;
+    margin-bottom: .3em;
+}
+
+h2.post-entry {
+    font-weight: 500;
+}
+
+h2.post-entry time {
+    font-weight: 400;
+    color: #aaa;
+    white-space: nowrap;
+}
+
+h2, h3, h4 {
+    font-weight: 600;
+}
+
+.post-meta {
+    display: block;
+    margin-bottom: 2em;
+}
+
+.content {
+    position: relative;
+    line-height: 1.4;
+    flex: 1;
+    padding: .5em 2em 1.5em;
+    background: rgba(29, 29, 29, 0.9);
+    overflow-x: hidden;
+}
+
+.content img {
+    max-width: 100%;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.bg {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: -1;
+    overflow-y: hidden;
+
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+pre {
+    padding: .3em .5em;
+    border: 1px solid #333;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    overflow-x: auto;
+}
+
+pre, .bg {
+    font-family: 'Droid Sans Mono', monospace;
+    font-size: 13pt;
+}
+
+a {
+    color: #fff !important;
+}
+
+:not(pre) > code {
+    display: inline-block;
+    border: 1px solid #333;
+    background-color: #1e1e1e;
+    color: #dcdcdc;
+    padding: 0 .2em;
+}
+
+h2 a {
+    text-decoration: none;
+}
+
+blockquote {
+    margin-left: 0;
+    padding-left: 1em;
+    border-left: solid .2em #666;
+}
+
+blockquote p {
+    margin: .7em 0;
+}
+
+figcaption {
+    font-size: 77.5%;
+}
+
+.info {
+    margin: 1em -1em;
+    padding: .3em 1em;
+    background-color: #252525;
+    border: 1px solid #333;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    font-size: 95%;
+}
+
+.info::before {
+    content: 'ℹ';
+    display: block;
+    margin-top: .3em;
+    margin-left: .15em;
+}
+
+.info p {
+    margin: .5em 0;
+}
+
+.info pre {
+    background-color: #202020 !important;
+}
+
+.abbrev {
+    text-decoration: underline dotted;
+}
+
+/* First footnote ::before */
+p + .footnote-definition::before {
+    content: 'Footnotes';
+    display: block;
+    color: #ccc;
+    margin: 2em 0 .3em;
+    /* Very very very close to the size of 'Previous post' / 'Next post' */
+    font-size: 88.89%;
+}
+
+.footnote-definition {
+    margin: .5em 0;
+    font-size: 90%;
+}
+
+.footnote-definition > p {
+    display: inline;
+}
+
+.footnote-definition > :not(.footnote-definition-label) {
+    margin-left: .5em;
+}
+
+.footnote-definition > p:nth-child(2) {
+    margin-top: 0;
+}
+
+.footnote-definition > p:last-child {
+    margin-bottom: 0;
+}
+
+.other-post-links {
+    display: flex;
+    list-style: none;
+    padding: 0;
+    margin: 2em 0 0;
+}
+
+.next-post {
+    margin-left: auto;
+}
+
+.other-post-links small {
+    color: #ccc;
+}
+
+.other-post-links a {
+    display: block;
+}
+
+.sidebar {
+    display: flex;
+    flex-direction: column;
+    color: #ccc;
+    padding: 1.5em 2em;
+    background: rgba(23, 23, 23, 0.85);
+}
+
+.author {
+    color: #fff;
+    margin-top: .5em;
+    display: flex;
+    align-items: center;
+}
+
+.author-icon {
+    height: 1em;
+    width: auto;
+    margin-right: .5em;
+}
+
+.about {
+    font-size: 90%;
+    color: #ddd;
+    margin-top: .5em;
+}
+
+ul.ext-links {
+    display: flex;
+    flex-wrap: wrap;
+    list-style: none;
+    margin-top: .25em;
+    padding-left: 0;
+}
+
+.ext-links li {
+    min-width: 50%;
+    margin-bottom: .5em;
+}
+
+.ext-links a {
+    font-size: 90%;
+}
+
+.rss {
+    font-size: 90%;
+}
+
+.rss svg {
+    margin-right: .25em;
+}
+
+.rss svg path {
+    fill: #fff;
+}
+
+.sidebar-footer {
+    margin-top: auto;
+}
+
+@media screen and (min-width: 791px) {
+    .sidebar {
+        flex: 0 0 300px;
+    }
+}
+
+@media screen and (max-width: 790px) {
+    .page {
+        flex-direction: column;
+    }
+}
+
+t, u, r, b, o, f, i, s, h {
+    display: flex;
+    font-size: 2.5rem;
+    padding: .5em;
+    color: #fff;
+    text-decoration: none;
+    white-space: nowrap;
+
+    position: relative;
+}
+
+t { margin-left: 50% }
+u { margin-left: 24% }
+r { margin-left: 80% }
+b { margin-left: 32% }
+o { margin-left: 6% }
+f { margin-left: 48% }
+i { margin-left: 67% }
+s { margin-left: 18% }
+h { margin-left: 43% }
+
+t::before, t::after,
+u::before, u::after,
+r::before, r::after,
+b::before, b::after,
+o::before, o::after,
+f::before, f::after,
+i::before, i::after,
+s::before, s::after,
+h::before, h::after {
+    content: '∶';
+    order: -1;
+    display: block;
+}
+
+.reverse t::before, .reverse t::after,
+.reverse u::before, .reverse u::after, .index u::before, .index u::after,
+.reverse r::before, .reverse r::after,
+.reverse b::before, .reverse b::after, .index b::before, .index b::after,
+.reverse o::before, .reverse o::after,
+.reverse f::before, .reverse f::after,
+.reverse i::before, .reverse i::after, .index i::before, .index i::after,
+.reverse s::before, .reverse s::after, .index s::before, .index s::after,
+.reverse h::before, .reverse h::after {
+    order: 1;
+}

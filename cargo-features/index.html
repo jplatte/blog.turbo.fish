@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en" class="index">
+
+<meta charset="utf-8">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="alternate" type="application/rss+xml" href="/rss.xml" title="blog.turbo.fish">
+
+<meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'none';
+    style-src 'self' 'unsafe-inline';
+    frame-src 'none'
+    
+">
+
+<title>Advanced Cargo [features] Usage | blog.turbo.fish</title>
+
+<link rel="stylesheet" href="/normalize.css">
+<link rel="stylesheet" href="/blog.css">
+
+<div class="page">
+    <div class="content">
+        
+
+<article>
+    <h1 class="page-title">Advanced Cargo [features] Usage</h1>
+    <small class="post-meta">
+        Published
+        <time datetime="2020-10-30">2020-10-30</time>
+        on
+        <a href="/">blog.turbo.fish</a>
+    </small>
+    
+    <p>Last year, <a href="https://blog.turbo.fish/rust-2020/">in my Rust 2020 blog post</a>, I asked for Cargo crate
+features to receive some attention. Fortunately, it seems like I was not the
+only one and the big feature resolver rewrite that was required to fix a number
+of issues has happened. Unfortunately, the new feature resolve is still
+Nightly-only, and it still doesn't fix all of my gripes with Cargo <code>[features]</code>.
+Recently, I discovered some tricks to work around some of these gripes, so I
+thought I should share them here!</p>
+<h2 id="reusing-the-name-of-an-optional-dependency-for-a-feature">Reusing the name of an optional dependency for a feature</h2>
+<p>Sometimes, you have an optional dependency, and would like to activate a feature
+or another dependency automatically if that dependency is activated – exactly
+like if it was a crate feature. However, you can't just create a feature of the
+same name because that would cause a conflict (dependencies and features share
+the same namespace<sup class="footnote-reference"><a href="#1">1</a></sup>). Adding a feature of a different name and requiring your
+users to activate that would be a breaking change, for something that should
+really be straight-forward. What to do?</p>
+<p>To answer that, let me first back up a bit:</p>
+<p>Since <a href="https://blog.rust-lang.org/2018/12/06/Rust-1.31-and-rust-2018.html#cargo-features">Cargo 1.31</a>, you can rename dependencies in <code>Cargo.toml</code>. Usually, you
+would do this to import multiple versions of the same crate, or, most often, to
+just use the crate under a different (shorter) name. However, it also means that
+referring to it in feature dependencies…</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">features</span><span>]
+</span><span style="color:#569cd6;">my_feature </span><span>= [</span><span style="color:#d69d85;">&quot;&lt;here&gt;&quot;</span><span>]
+</span></code></pre>
+<p>is done using the name you chose, rather than the original name. This means you
+can reuse the original crate name as the name of a feature! However, it also
+means that you now have to refer to the dependency using a different name in
+your code. Unless…</p>
+<h3 id="without-actually-renaming-it">… without actually renaming it</h3>
+<p>You just rename it back in your crate root! Before renaming was possible in
+<code>Cargo.toml</code>, you would do it through <code>extern crate foo as bar;</code>. Turns out you
+can do this to just undo a renaming from <code>Cargo.toml</code>. In Rust 2018 crates, this
+will result in both names referring to the same crate, but that should not be an
+issue in practice.</p>
+<p>To put all this together into a made-up example, let's say you have a crate
+<code>big_crate</code> that defines a bunch of types, and has an optional dependency on
+<code>serde</code> to make them (de)serializable for users who need that:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">serde </span><span>= { </span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;1.0.117&quot;</span><span>, </span><span style="color:#569cd6;">features </span><span>= [</span><span style="color:#d69d85;">&quot;derive&quot;</span><span>], </span><span style="color:#569cd6;">optional </span><span>= </span><span style="color:#569cd6;">true </span><span>}
+</span><span style="color:#608b4e;"># other dependencies
+</span></code></pre>
+<p>Now your crate is rather large, and some of your users are only interested in
+a rather small subset of your crate. You decide that it makes sense to have this
+subset in an independent crate <code>small_crate</code>, and refactor things accordingly,
+re-exporting the new crate's contents such that the API of <code>big_crate</code> stays the
+same. However, some of the types with optional (de)serialization have moved too!
+You need to make sure that they continue to implement <code>Deserialize</code> and
+<code>Serialize</code> if <code>big_crate</code>s <code>serde</code> dependency is enabled. To do that, first
+rename <code>serde</code> in <code>Cargo.toml</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">serde_cr </span><span>= { </span><span style="color:#569cd6;">package </span><span>= </span><span style="color:#d69d85;">&quot;serde&quot;</span><span>, </span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;1.0.117&quot;</span><span>, </span><span style="color:#569cd6;">features </span><span>= [</span><span style="color:#d69d85;">&quot;derive&quot;</span><span>], </span><span style="color:#569cd6;">optional </span><span>= </span><span style="color:#569cd6;">true </span><span>}
+</span><span style="color:#569cd6;">small_crate </span><span>= </span><span style="color:#d69d85;">&quot;0.1.0&quot; </span><span style="color:#608b4e;"># Added during the refactoring
+</span><span style="color:#608b4e;"># other dependencies
+</span></code></pre>
+<p>Then add a <code>serde</code> feature:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">features</span><span>]
+</span><span style="color:#569cd6;">serde </span><span>= [
+</span><span>    </span><span style="color:#d69d85;">&quot;serde_cr&quot;</span><span>, </span><span style="color:#608b4e;"># Enable the serde dependency...
+</span><span>    </span><span style="color:#d69d85;">&quot;small_crate/serde&quot;</span><span>, </span><span style="color:#608b4e;"># ... and small_crate&#39;s serde feature
+</span><span>]
+</span></code></pre>
+<p>and finally, undo the renaming from <code>Cargo.toml</code> in <code>big_crate</code>s <code>lib.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">extern crate</span><span> serde_cr </span><span style="color:#569cd6;">as</span><span> serde;
+</span></code></pre>
+<p>That's it. Onto the next trick!</p>
+<h2 id="activating-a-dependency-if-a-combination-of-features-is-active">Activating a dependency if a combination of features is active</h2>
+<small>
+    or activating a feature if a combination of other features is active
+</small>
+<p>… is unfortunately not possible in the general case. However, there is a
+workaround that works well enough for a subset of use cases: Adding a combined
+feature. That is, if you have an <code>f_foo</code> feature for the <code>c_foo</code> crate and an
+<code>f_bar</code> feature for the <code>c_bar</code> crate, and also need to activate the <code>c_foo_bar</code>
+crate if both <code>f_foo</code> and <code>f_bar</code> are active, just require your users to use a
+new feature, <code>f_foo_bar</code>, which automatically activates <code>f_foo</code> and <code>f_bar</code>, but
+also the <code>c_foo_bar</code> dependency.</p>
+<p>The reason this doesn't work in the general case is that other library crates
+(not just applications) might want to use features your crate provides. If one
+<code>rdep_1</code> activates <code>f_foo</code> and <code>rdep_2</code> activates <code>f_bar</code>, another crate
+depending on both <code>rdep_1</code> and <code>rdep_2</code> would have to know how these work
+internally and depend on your crate explicitly without actually using it, just
+to activate <code>f_foo_bar</code>.</p>
+<p>As a practical example, you can have a look at <a href="https://github.com/launchbadge/sqlx/pull/735">my PR adding rustls as an
+alternative TLS backend in SQLx</a>. There, I added <em>six</em> of these
+combined features for every possible combination of runtime (<code>async-std</code> /
+<code>tokio</code> / <code>actix</code>) and TLS backend (<code>native-tls</code> / <code>rustls</code>). Some of the
+combined features activate crates that are only relevant for that combination
+of runtime and TLS backend, for example <code>tokio</code> + <code>native-tls</code> ⇒
+<code>tokio-native-tls</code>.</p>
+<p>This trick works very well for runtimes and TLS backends in SQLx because there
+is no reason for it to expose them independently. Other crates can either select
+both a runtime and TLS backend at the same time, or have their own runtime + TLS
+backend features that activate the corresponding ones in SQLx.</p>
+<h2 id="good-error-messages-for-mutually-exclusive-feature-misuse">Good error messages for mutually exclusive feature misuse</h2>
+<p>Mutually exclusive features are not natively supported in Cargo. Of course it is
+easy to make something not compile with a certain feature set, but more often
+than not, you want to provide a useful error message if a conflicting feature
+set is requested. This is usually solved through a conditional <code>compile_error!</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[cfg(all(feature </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;feat1&quot;</span><span>, feature </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;feat2&quot;</span><span>))]
+</span><span>compile_error!(</span><span style="color:#d69d85;">&quot;`feat1` and `feat2` may not be used at the same time&quot;</span><span>);
+</span></code></pre>
+<p>However, if your crate would already not compile with these two features
+activated at the same time, for example due to duplicate definitions of the
+same item, this new error message is not going to replace those<sup class="footnote-reference"><a href="#2">2</a></sup> but rather
+just appear alongside them. That's not very user friendly!</p>
+<p>To fix this, you can carefully set up your <code>#[cfg]</code>s such that all of the other
+errors go away for all invalid feature sets a user could provide, for example
+by using <code>#[cfg(all(feature = "feat1", not(feature = "feat2")))]</code> rather than
+just <code>#[cfg(feature = "feat1")]</code> on the first definition of an item that has
+different definitions for the two features. Of course, this quickly becomes a
+burden if there is a non-trivial amount of feature-gated code, so I am here to
+offer an alternative: Move the feature set check into a <a href="https://doc.rust-lang.org/cargo/reference/build-scripts.html">build script</a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>std::{env, process};
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>main() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> feat1_active = env::var_os(</span><span style="color:#d69d85;">&quot;CARGO_FEATURE_FEAT1&quot;</span><span>).is_some();
+</span><span>    </span><span style="color:#569cd6;">let</span><span> feat2_active = env::var_os(</span><span style="color:#d69d85;">&quot;CARGO_FEATURE_FEAT2&quot;</span><span>).is_some();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">if</span><span> feat1_active </span><span style="color:#569cd6;">&amp;&amp;</span><span> feat2_active {
+</span><span>        eprintln!(</span><span style="color:#d69d85;">&quot;error: The f1 and f2 features can&#39;t be activated at the same time.&quot;</span><span>);
+</span><span>        process::exit(</span><span style="color:#b5cea8;">1</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><em>Note: An earlier version of this post advocated using <code>compile_error!</code>, but in
+a separate crate that the main crate forwards all its features to. That also
+works, but is more work and as far as I know has no advantages over the build
+script approach that I came up with shortly after.</em></p>
+<div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup>
+<p>There is an <a href="https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#namespaced-features">unstable feature</a> that changes this.</p>
+</div>
+<div class="footnote-definition" id="2"><sup class="footnote-definition-label">2</sup>
+<p>This is only true for some kinds of errors, but enough of them for this to
+be a problem more often than not.</p>
+</div>
+
+</article>
+
+<ul class="other-post-links">
+    
+    <li class="previous-post">
+        <small>Previous post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;announcing-caniuse-rs&#x2F;">Announcing caniuse.rs</a>
+    </li>
+    
+    
+    <li class="next-post">
+        <small>Next post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-basics&#x2F;">Procedural Macros: The Basics</a>
+    </li>
+    
+</ul>
+
+
+        <div class="bg" aria-hidden="true" tabindex="-1">
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+        </div>
+    </div>
+
+    <aside class="sidebar">
+    <small>This blog is written by</small>
+    <div class="author">
+        <img class="author-icon" src="&#x2F;img&#x2F;jplatte.png" alt="">
+        <span class="author-name">Jonas Platte</span>
+    </div>
+
+    <div class="about">
+        <p>I am the creator of <a href="https://turbo.fish/">turbo.fish</a> and <a href="https://caniuse.rs/">caniuse.rs</a>. You may also know me
+because of my involvement with the <a href="https://ruma.dev/">Ruma</a> project.</p>
+
+    </div>
+
+    <ul class="ext-links">
+    
+        <li>
+            <small>sourcehut</small><br>
+            <a href="https:&#x2F;&#x2F;git.sr.ht&#x2F;~jplatte&#x2F;">~jplatte</a>
+        </li>
+    
+        <li>
+            <small>github</small><br>
+            <a href="https:&#x2F;&#x2F;github.com&#x2F;jplatte">jplatte</a>
+        </li>
+    
+        <li>
+            <small>liberapay</small><br>
+            <a href="https:&#x2F;&#x2F;liberapay.com&#x2F;jplatte&#x2F;">jplatte</a>
+        </li>
+    
+    </ul>
+
+    <div class="rss">
+        <a href="/rss.xml"><svg viewBox="0 0 1536 1536" width="13" height="13" xmlns="http://www.w3.org/2000/svg">
+    <title>News feed (Atom)</title>
+    <path d="M384 1344c0 106-86 192-192 192S0 1450 0 1344s86-192 192-192 192 86 192 192zm512 123c1 18-5 35-17 48-12 14-29 21-47 21H697c-33 0-60-25-63-58-29-305-271-547-576-576-33-3-58-30-58-63V704c0-18 7-35 21-47 11-11 27-17 43-17h5c213 17 414 110 565 262 152 151 245 352 262 565zm512 2c1 17-5 34-18 47-12 13-28 20-46 20h-143c-34 0-62-26-64-60C1104 895 641 432 60 398c-34-2-60-30-60-63V192c0-18 7-34 20-46 12-12 28-18 44-18h3c350 18 679 165 927 414 249 248 396 577 414 927z"/>
+</svg>RSS Feed</a>
+    </div>
+
+    <div class="sidebar-footer">
+        <small>Built using <a href="https://www.getzola.org/">Zola</a></small>
+    </div>
+</aside>
+
+</div>
+
+</html>

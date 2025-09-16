@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en" class="index">
+
+<meta charset="utf-8">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="alternate" type="application/rss+xml" href="/rss.xml" title="blog.turbo.fish">
+
+<meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'none';
+    style-src 'self' 'unsafe-inline';
+    frame-src 'none'
+    
+">
+
+<title>Announcing caniuse.rs | blog.turbo.fish</title>
+
+<link rel="stylesheet" href="/normalize.css">
+<link rel="stylesheet" href="/blog.css">
+
+<div class="page">
+    <div class="content">
+        
+
+<article>
+    <h1 class="page-title">Announcing caniuse.rs</h1>
+    <small class="post-meta">
+        Published
+        <time datetime="2020-03-04">2020-03-04</time>
+        on
+        <a href="/">blog.turbo.fish</a>
+    </small>
+    
+    <p>Hello, dear reader! Today, I am excited to announce</p>
+<h2 id="caniuse-rs"><a href="https://caniuse.rs">caniuse.rs</a></h2>
+<p><img src="https://blog.turbo.fish/announcing-caniuse-rs/screenshot.png" alt="screenshot of caniuse.rs" /></p>
+<p>A website I created, which, in contrast to <a href="https://turbo.fish/">turbo.fish</a>,
+has a practical use: It allows you to quickly find out which version of Rust
+stabilized a certain feature<sup class="footnote-reference"><a href="#1">1</a></sup>. It's like <code>site:blog.rust-lang.org</code> in your
+search engine, but better!</p>
+<h2 id="what-for">What for?</h2>
+<p>You might never have asked yourself "what version of Rust stabilized X". Then
+caniuse.rs is probably not going to be that useful for you. But I have been in
+that situation quite a few times, and I'm sure other have been too. To list a
+few (fictional) scenarios:</p>
+<ul>
+<li>You just noticed that a crate you are working on only uses <code>lazy_static!</code> in
+one place, for a thing that you think should really be a <code>const</code> instead.
+You're wondering if the functions used to initialize that value are <code>const fn</code>
+by now.</li>
+<li>You see a crate use <code>Struct { redundant: redundant }</code> field initialization. It
+has a relatively old MSRV, but is it too old for field init shorthands?</li>
+<li>You remember reading an RFC about exhaustive integer pattern matching and are
+now wondering whether that <code>_ =&gt; unreachable!()</code> arm can finally be removed
+from your <code>match</code>.</li>
+<li>It is the year 2025. The last time you worked with Rust was in 2020. You
+wonder whether the never type (<code>!</code>) is stable by now.</li>
+</ul>
+<h2 id="that-s-it">That's it!</h2>
+<p>I don't think there's a point in writing more about the site here when you can
+just go over there and try it out yourself.</p>
+<p><a href="https://caniuse.rs/">» caniuse.rs «</a></p>
+<div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup>
+<p>With "feature", I don't mean just <code>#![feature(…)]</code> features. I also mean
+all the things that continually got added to <code>std</code>. Functions that were made
+<code>const</code>. Macros that used to only be callable with arguments that were changed
+to allow argument-less calls or vice versa. There's even been a few
+language-level changes that were implemented without receiving a feature gate.</p>
+</div>
+
+</article>
+
+<ul class="other-post-links">
+    
+    <li class="previous-post">
+        <small>Previous post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;rust-2020&#x2F;">Rust 2020: Generics &amp; Cargo Features</a>
+    </li>
+    
+    
+    <li class="next-post">
+        <small>Next post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;cargo-features&#x2F;">Advanced Cargo [features] Usage</a>
+    </li>
+    
+</ul>
+
+
+        <div class="bg" aria-hidden="true" tabindex="-1">
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+        </div>
+    </div>
+
+    <aside class="sidebar">
+    <small>This blog is written by</small>
+    <div class="author">
+        <img class="author-icon" src="&#x2F;img&#x2F;jplatte.png" alt="">
+        <span class="author-name">Jonas Platte</span>
+    </div>
+
+    <div class="about">
+        <p>I am the creator of <a href="https://turbo.fish/">turbo.fish</a> and <a href="https://caniuse.rs/">caniuse.rs</a>. You may also know me
+because of my involvement with the <a href="https://ruma.dev/">Ruma</a> project.</p>
+
+    </div>
+
+    <ul class="ext-links">
+    
+        <li>
+            <small>sourcehut</small><br>
+            <a href="https:&#x2F;&#x2F;git.sr.ht&#x2F;~jplatte&#x2F;">~jplatte</a>
+        </li>
+    
+        <li>
+            <small>github</small><br>
+            <a href="https:&#x2F;&#x2F;github.com&#x2F;jplatte">jplatte</a>
+        </li>
+    
+        <li>
+            <small>liberapay</small><br>
+            <a href="https:&#x2F;&#x2F;liberapay.com&#x2F;jplatte&#x2F;">jplatte</a>
+        </li>
+    
+    </ul>
+
+    <div class="rss">
+        <a href="/rss.xml"><svg viewBox="0 0 1536 1536" width="13" height="13" xmlns="http://www.w3.org/2000/svg">
+    <title>News feed (Atom)</title>
+    <path d="M384 1344c0 106-86 192-192 192S0 1450 0 1344s86-192 192-192 192 86 192 192zm512 123c1 18-5 35-17 48-12 14-29 21-47 21H697c-33 0-60-25-63-58-29-305-271-547-576-576-33-3-58-30-58-63V704c0-18 7-35 21-47 11-11 27-17 43-17h5c213 17 414 110 565 262 152 151 245 352 262 565zm512 2c1 17-5 34-18 47-12 13-28 20-46 20h-143c-34 0-62-26-64-60C1104 895 641 432 60 398c-34-2-60-30-60-63V192c0-18 7-34 20-46 12-12 28-18 44-18h3c350 18 679 165 927 414 249 248 396 577 414 927z"/>
+</svg>RSS Feed</a>
+    </div>
+
+    <div class="sidebar-footer">
+        <small>Built using <a href="https://www.getzola.org/">Zola</a></small>
+    </div>
+</aside>
+
+</div>
+
+</html>

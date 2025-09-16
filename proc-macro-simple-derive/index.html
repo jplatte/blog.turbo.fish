@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en" class="index">
+
+<meta charset="utf-8">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="alternate" type="application/rss+xml" href="/rss.xml" title="blog.turbo.fish">
+
+<meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'none';
+    style-src 'self' 'unsafe-inline';
+    frame-src 'none'
+    
+">
+
+<title>Procedural Macros: A simple derive macro | blog.turbo.fish</title>
+
+<link rel="stylesheet" href="/normalize.css">
+<link rel="stylesheet" href="/blog.css">
+
+<div class="page">
+    <div class="content">
+        
+
+<article>
+    <h1 class="page-title">Procedural Macros: A simple derive macro</h1>
+    <small class="post-meta">
+        Published
+        <time datetime="2021-02-20">2021-02-20</time>
+        on
+        <a href="/">blog.turbo.fish</a>
+    </small>
+    
+    <p>This is the second article in my series on procedural macros. If you don't know
+what procedural macros are, I highly recommend reading
+<a href="/proc-macro-basics/">the previous article</a> first.</p>
+<p>This article will go through a simple derive macro: <code>Getters</code>.
+<code>#[derive(Getters)]</code> will generate an accessor function for every named field of
+its input struct (it will report an error when used on other kinds of types). So</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[derive(Getters)]
+</span><span style="color:#569cd6;">struct </span><span>NewsFeed {
+</span><span>    name: String,
+</span><span>    url: String,
+</span><span>    category: Option&lt;String&gt;,
+</span><span>}
+</span></code></pre>
+<p>will generate</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>NewsFeed {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>name(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;</span><span>String {
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self.name
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>url(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;</span><span>String {
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self.url
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>category(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;</span><span>Option&lt;String&gt; {
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self.category
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>To make it easy to play around with the code in the next sections, I've created
+a git repository that will contain all of the examples from this blog series
+eventually. No need to go there now if you plan to continue reading; there will
+be a link to the commits for the changes from this article at the end.</p>
+<p>If you just want to read code without explanations though, here is the link you
+need: <a href="https://github.com/jplatte/proc-macro-blog-examples">https://github.com/jplatte/proc-macro-blog-examples</a></p>
+<h2 id="getting-started">Getting started</h2>
+<p>First off, we need to create the proc-macro crate that is going to contain our
+derive macro. We'll name it <code>derive_getters</code> and create it using</p>
+<pre data-lang="sh" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-sh "><code class="language-sh" data-lang="sh"><span>cargo init --lib derive_getters
+</span></code></pre>
+<p>Then we add</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">lib</span><span>]
+</span><span style="color:#569cd6;">proc-macro </span><span>= </span><span style="color:#569cd6;">true
+</span></code></pre>
+<p>to its <code>Cargo.toml</code> and add dependencies on <code>proc-macro2</code>, <code>syn</code> and <code>quote</code>.</p>
+<div class="info">
+<p>You can add dependencies on the command line with <a href="https://crates.io/crates/cargo-edit">cargo-edit</a>:</p>
+<pre data-lang="sh" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-sh "><code class="language-sh" data-lang="sh"><span>cargo add proc-macro2 syn quote
+</span></code></pre>
+</div>
+<p>As mentioned in the first article, derive macros are simply functions with the
+<code>#[proc_macro_derive(Name)]</code> attribute, so we add</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>proc_macro::TokenStream;
+</span><span>
+</span><span>#[proc_macro_derive(Getters)]
+</span><span style="color:#569cd6;">pub fn </span><span>getters(input: TokenStream) -&gt; TokenStream {
+</span><span>    TokenStream::new()
+</span><span>}
+</span></code></pre>
+<p>to <code>lib.rs</code>. This derive macro can now already be used! It just doesn't do
+anything yet.</p>
+<h2 id="parsing-the-input">Parsing the input</h2>
+<p>Most procedural macros start with an invocation of <code>syn::parse_macro_input!()</code>.
+We will do the same thing here<sup class="footnote-reference"><a href="#1">1</a></sup>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::{parse_macro_input, DeriveInput};
+</span><span>
+</span><span style="color:#569cd6;">let</span><span> input = parse_macro_input!(input </span><span style="color:#569cd6;">as</span><span> DeriveInput);
+</span></code></pre>
+<p>This will get us an instance of <code>DeriveInput</code>, or report an error back to the
+compiler if parsing the <code>TokenStream</code> as a <code>DeriveInput</code> fails<sup class="footnote-reference"><a href="#2">2</a></sup>.</p>
+<p>All further inspection of the input as well as the generation of the output is
+usually done in a sub-module rather than in <code>lib.rs</code>, and uses the types from
+<code>proc_macro2</code> instead of <code>proc_macro</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// lib.rs
+</span><span style="color:#569cd6;">mod </span><span>getters;
+</span><span style="color:#569cd6;">use </span><span>getters::expand_getters;
+</span><span>
+</span><span style="color:#608b4e;">// getters.rs
+</span><span style="color:#569cd6;">use </span><span>proc_macro2::TokenStream;
+</span><span style="color:#569cd6;">use </span><span>syn::DeriveInput;
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>expand_getters(input: DeriveInput) -&gt; TokenStream {
+</span><span>    TokenStream::new()
+</span><span>}
+</span></code></pre>
+<p>Since this is a different <code>TokenStream</code> type, we need to add an extra conversion
+when using <code>expand_getters</code> from the procedural macro function. Here is the
+updated definition:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[proc_macro_derive(Getters)]
+</span><span style="color:#569cd6;">pub fn </span><span>getters(input: TokenStream) -&gt; TokenStream {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> input = parse_macro_input!(input </span><span style="color:#569cd6;">as</span><span> DeriveInput);
+</span><span>    expand_getters(input).into()
+</span><span>}
+</span></code></pre>
+<p>Now before we go to generate output, we need a way of accessing the fields of
+our input struct, if it is a struct with named fields. Of course <code>DeriveInput</code>
+can also contain an enum, unit struct or tuple struct. Figuring out what's
+inside is a simple manner of <code>match</code>ing:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::{Data, DataStruct, Fields};
+</span><span>
+</span><span style="color:#569cd6;">let</span><span> fields = </span><span style="color:#569cd6;">match</span><span> input.data {
+</span><span>    Data::Struct(DataStruct { fields: Fields::Named(fields), </span><span style="color:#569cd6;">.. </span><span>}) </span><span style="color:#569cd6;">=&gt;</span><span> fields.named,
+</span><span>    </span><span style="color:#569cd6;">_ =&gt; </span><span>panic!(</span><span style="color:#d69d85;">&quot;this derive macro only works on structs with named fields&quot;</span><span>),
+</span><span>};
+</span></code></pre>
+<p>Here, we <code>panic!()</code> if the input is not what we expect it to be. Very often,
+panicking in procedural macros is not a good idea since it will generate a
+compiler error pointing at the usage of the derive macro, rather than pointing
+at relevant parts of the macro input. However, in this case there isn't really
+a more specific error location than the macro itself. If the input is an <code>enum</code>,
+we could point at the <code>enum</code> token itself, but it seems questionable whether
+that would be much better.</p>
+<div class="info">
+<p>If you want to learn about the other fields of <code>DeriveInput</code> and <code>DataStruct</code>,
+the other variants of <code>Data</code> and <code>Fields</code> and such, you can find all that in
+<a href="https://docs.rs/syn/1.0">syn's documentation</a>.</p>
+</div>
+<h2 id="generating-some-output">Generating some output</h2>
+<p>To generate output, we will use the <code>quote</code> crate's <code>quote!</code> macro.</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>quote::quote;
+</span></code></pre>
+<p>It is usually invoked with curly braces. Inside, you can write arbitary Rust
+code, which won't be compiled as part of the proc-macro itself, but instead is
+returned as a <code>TokenStream</code>. We use it to replace the <code>TokenStream::new()</code> at
+the end of <code>expand_getters</code>:</p>
+<pre data-lang="diff" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-diff "><code class="language-diff" data-lang="diff"><span>-TokenStream::new()
+</span><span>+quote! {
+</span><span>+    impl NewsFeed {}
+</span><span>+}
+</span></code></pre>
+<p>This will work for our first example, but of course we want to use the name of
+whatever struct our derive was used on. This is where some of the extra symbol
+soup from the previous article comes in: interpolation. <code>quote!</code> can interpolate
+the values of local variables into the output. You tell it to do that by
+prefixing an identifier with a hash sign (<code>#</code>):</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> st_name = input.ident;
+</span><span>
+</span><span>quote! {
+</span><span>    </span><span style="color:#608b4e;">// It&#39;s a good practice to use this attribute on macro-generated impl blocks.
+</span><span>    #[automatically_derived]
+</span><span>    </span><span style="color:#569cd6;">impl </span><span>#st_name {}
+</span><span>}
+</span></code></pre>
+<p>So far so good, but that <code>impl</code> block should actually contain some methods.
+We extracted the named fields of the input into a local variable already, now
+how do we do something useful with it? This fields has the type
+<code>syn::punctuated::Punctuated&lt;syn::Field, syn::token::Comma&gt;</code>, more commonly
+written <code>Punctuated&lt;Field, Token![,]&gt;</code>. Really all we need from that right now
+is an iterator of the actual <code>Field</code>s to be able to generate some code for each
+of them, and of course <code>Punctuated</code> implements <code>IntoIterator</code>, which means we
+can do this:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> getters = fields.into_iter().map(|f| {
+</span><span>    </span><span style="color:#608b4e;">// Interpolation only works for variables, not arbitrary expressions.
+</span><span>    </span><span style="color:#608b4e;">// That&#39;s why we need to move these fields into local variables first
+</span><span>    </span><span style="color:#608b4e;">// (borrowing would also work though).
+</span><span>    </span><span style="color:#569cd6;">let</span><span> field_name = f.ident;
+</span><span>    </span><span style="color:#569cd6;">let</span><span> field_ty = f.ty;
+</span><span>
+</span><span>    quote! {
+</span><span>        </span><span style="color:#569cd6;">pub fn #</span><span>field_name(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;#</span><span>field_ty {
+</span><span>            </span><span style="color:#569cd6;">&amp;</span><span>self.</span><span style="color:#569cd6;">#</span><span>field_name
+</span><span>        }
+</span><span>    }
+</span><span>});
+</span></code></pre>
+<p>The <code>getters</code> are interpolated into the output in a slightly different way:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[automatically_derived]
+</span><span style="color:#569cd6;">impl </span><span>#st_name {
+</span><span>    </span><span style="color:#569cd6;">#</span><span>(</span><span style="color:#569cd6;">#</span><span>getters)*
+</span><span>}
+</span></code></pre>
+<p>The reason we have to enclose <code>#getters</code> in <code>#()*</code> is that it's not a single
+thing: It's an iterator. <code>#()*</code> tells <code>quote!</code> to interpolate the inner tokens
+once per item in all interpolated iterators.</p>
+<div class="info">
+<p>In this very simple case, we could have called <code>.collect::&lt;TokenStream&gt;()</code> on
+the iterator and interpolated the result without <code>#()*</code>, but repetitions are
+actually more general than that so it's good to know them. See <a href="https://blog.turbo.fish/proc-macro-simple-derive/#a-interpolation-repetition">Appendix A</a> for
+more about interpolations.</p>
+</div>
+<h2 id="if-something-goes-wrong">If something goes wrong</h2>
+<p>We now have a working proc-macro! But what if we had made a mistake in our
+generated code? Imagine forgetting the <code>#</code> in <code>&amp;self.#field_name</code> of the
+generated getter methods. Now all getter methods try to access a field named
+literally <code>field_name</code>, which will for most invocations generate errors about
+that field not existing. Since the problem is in generated code, they point at
+the derive macro invocation:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0609]: no field `field_name` on type `&amp;NewsFeed`
+</span><span> --&gt; getters/tests/news_feed.rs:3:10
+</span><span>  |
+</span><span>3 | #[derive(Getters)]
+</span><span>  |          ^^^^^^^ unknown field
+</span><span>  |
+</span><span>  = note: available fields are: `name`, `url`, `category`
+</span><span>  = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)
+</span></code></pre>
+<p>That's not very helpful. And while we might be able to figure things out in this
+case, imagine your macro code being 500 lines of code or more. Clearly, we need
+a way of seeing the generated code. This is where <a href="https://github.com/dtolnay/cargo-expand#readme">cargo-expand</a> comes in. You
+invoke it like any cargo command that runs the compiler (e.g. <code>check</code> or
+<code>build</code>), and you can additionally specify a module path to filter out of the
+output, similar to the last argument of <code>cargo test</code>:</p>
+<ul>
+<li><code>cargo expand foo::bar</code> – show the generated code for the module <code>foo::bar</code></li>
+<li><code>cargo expand --test news_feed</code> – show the generated code for the <code>news_feed</code>
+test</li>
+</ul>
+<p>In the case of the forgotten <code>#</code>, expanding the news feed test case from the
+beginning will make the problem very clear (comments are mine, of course):</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Some things you will always see in the output of `cargo expand`.
+</span><span style="color:#608b4e;">// Usually you can just remove these if you want to compile the expanded output
+</span><span style="color:#608b4e;">// separately to find an issue in a large body of generated code.
+</span><span>#![feature(prelude_import)]
+</span><span>#[prelude_import]
+</span><span style="color:#569cd6;">use </span><span>std::prelude::v1::*;
+</span><span>#[macro_use]
+</span><span style="color:#569cd6;">extern crate</span><span> std;
+</span><span style="color:#608b4e;">// What you wrote, with macros expanded:
+</span><span style="color:#569cd6;">use </span><span>getters::Getters;
+</span><span style="color:#608b4e;">// Omitted: Definition of NewsFeed
+</span><span>#[automatically_derived]
+</span><span style="color:#569cd6;">impl </span><span>NewsFeed {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>name(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;</span><span>String {
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self.field_name
+</span><span>    }
+</span><span>    </span><span style="color:#608b4e;">// Omitted: Other getters
+</span><span>}
+</span><span style="color:#608b4e;">// Omitted: Generated main function (because this is a test module)
+</span></code></pre>
+<h2 id="working-with-generic-types">Working with generic types</h2>
+<p>Our initial example produces the expected output, now we're done, right?
+Unfortunately, unless we just forbid generic structs as inputs, we aren't.
+Let's consider what our current logic will generate for:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[derive(Getters)]
+</span><span style="color:#569cd6;">struct </span><span>NewsFeedRef&lt;</span><span style="color:#569cd6;">&#39;a</span><span>&gt; {
+</span><span>    name: </span><span style="color:#569cd6;">&amp;&#39;a str</span><span>,
+</span><span>    url: </span><span style="color:#569cd6;">&amp;&#39;a str</span><span>,
+</span><span>    category: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;a str</span><span>&gt;,
+</span><span>}
+</span></code></pre>
+<p>It will generate <code>impl NewsFeedRef { ... }</code>! That won't work, since we're not
+allowed to elide the lifetime in impl blocks, and even if we were could, our
+generated methods would mention the lifetime <code>'a</code> in their return types. Clearly
+we need to introduce the type's generic parameters for the generated <code>impl</code>
+block too.</p>
+<p>You may assume that handling generics correctly will be a lot of work, and it
+can certainly be for some macros. However, for basic ones like ours we can just
+let <code>syn</code> do all of the heavy lifting:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let </span><span>(impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+</span><span>
+</span><span>quote! {
+</span><span>    #[automatically_derived]
+</span><span>    </span><span style="color:#569cd6;">impl </span><span>#impl_generics #st_name #ty_generics #where_clause {
+</span><span>        </span><span style="color:#569cd6;">#</span><span>(</span><span style="color:#569cd6;">#</span><span>getters)
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>And that's it! Our derive now works on generic types, including ones with type
+or const generics and complex where clauses. There's one thing this example
+makes even clearer than the previous ones though: Simply prepending a <code>&amp;</code> to a
+field's type is not a very good solution to finding an appropriate get method
+return type. See <a href="https://blog.turbo.fish/proc-macro-simple-derive/#b-improving-the-accessors-return-types">Appendix B</a> for a look at how we could improve the accessors'
+return types.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>At this point, you should have an understanding of how to create a simple
+derive macro! You can look at the macro crate built in this article in its
+entirety <a href="https://github.com/jplatte/proc-macro-blog-examples/tree/simple-derive-v1/derive_getters">here</a>, or review the changes from each section
+separately by going through the <a href="https://github.com/jplatte/proc-macro-blog-examples/compare/init...simple-derive-v1">corresponding commits</a>.</p>
+<p>There are still many things that I haven't covered of course. The most important
+one in my opinion is error handling, specifically reporting errors as
+originating from part of the input; that's what the <a href="/proc-macro-error-handling/">next article</a> is about.</p>
+<h2 id="appendix">Appendix</h2>
+<h3 id="a-interpolation-repetition">A. Interpolation repetition</h3>
+<p>As mentioned above, interpolation repetition is a lot more powerful than simply
+expanding an iterator. Here is an example:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>quote! {
+</span><span>    </span><span style="color:#569cd6;">struct </span><span>#name {
+</span><span>        #(</span><span style="color:#569cd6;">pub</span><span> #fields: #tys),*
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>fields</code> and <code>tys</code> are both iterators or lists here and will be iterated in
+lockstep to produce a list of struct fields, separated with commas (that is,
+there won't be a comma after the last field generated by the interpolation,
+which would be there if the comma was inside the parentheses).</p>
+<p>There is also a short section on interpolation
+<a href="https://docs.rs/quote/1.0/quote/macro.quote.html#interpolation">in <code>quote!</code>s documentation</a> if you want to learn more about
+interpolation, for example the supported types.</p>
+<h3 id="b-improving-the-accessors-return-types">B. Improving the accessors' return types</h3>
+<p>Since what the macro does so far is still very basic, I wanted to show a small
+thing that makes it somewhat more sophisticated: Customizing the output types
+for the generated methods.</p>
+<p>The first very simple "specialization" that I touched on with the
+<code>NewsFeedRef</code> example is references. These can be checked for easily:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::{Type, TypeReference};
+</span><span>
+</span><span style="color:#569cd6;">let</span><span> getters = fields.into_iter().map(|f| {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> field_name = f.ident;
+</span><span>    </span><span style="color:#569cd6;">let</span><span> return_ty = </span><span style="color:#569cd6;">match</span><span> f.ty {
+</span><span>        </span><span style="color:#608b4e;">// shared references can simply by copied
+</span><span>        Type::Reference(r </span><span style="color:#569cd6;">@</span><span> TypeReference { mutability: None, </span><span style="color:#569cd6;">.. </span><span>}) </span><span style="color:#569cd6;">=&gt; </span><span>quote! { </span><span style="color:#569cd6;">#</span><span>r },
+</span><span>        </span><span style="color:#608b4e;">// fallback to adding a reference
+</span><span>        ty </span><span style="color:#569cd6;">=&gt; </span><span>quote! { </span><span style="color:#569cd6;">&amp;#</span><span>ty },
+</span><span>    };
+</span><span>
+</span><span>    quote! {
+</span><span>        </span><span style="color:#569cd6;">pub fn #</span><span>field_name(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">#</span><span>return_ty {
+</span><span>            </span><span style="color:#569cd6;">&amp;</span><span>self.</span><span style="color:#569cd6;">#</span><span>field_name
+</span><span>        }
+</span><span>    }
+</span><span>});
+</span></code></pre>
+<p>And due to auto-deref, we don't even need to adjust the function body. This is
+more luck than anything else though, and we'll need to adjust the function body
+too if we want to add more specializations, for example for <code>Option&lt;_&gt;</code> and
+<code>String</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::{Path, TypePath};
+</span><span>
+</span><span style="color:#569cd6;">let </span><span>(return_ty, body) = </span><span style="color:#569cd6;">match</span><span> f.ty {
+</span><span>    Type::Reference(r </span><span style="color:#569cd6;">@</span><span> TypeReference { mutability: None, </span><span style="color:#569cd6;">.. </span><span>}) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>        (quote! { </span><span style="color:#569cd6;">#</span><span>r }, quote! { self.</span><span style="color:#569cd6;">#</span><span>field_name })
+</span><span>    }
+</span><span>    Type::Path(TypePath { path, </span><span style="color:#569cd6;">.. </span><span>}) </span><span style="color:#569cd6;">if</span><span> path.is_ident(</span><span style="color:#d69d85;">&quot;String&quot;</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>        (quote! { </span><span style="color:#569cd6;">&amp;</span><span>::core::primitive::str }, quote! { </span><span style="color:#569cd6;">&amp;</span><span>self.</span><span style="color:#569cd6;">#</span><span>field_name })
+</span><span>    }
+</span><span>    Type::Path(ty </span><span style="color:#569cd6;">@</span><span> TypePath { </span><span style="color:#569cd6;">.. </span><span>}) </span><span style="color:#569cd6;">=&gt; match </span><span>option_inner_type(</span><span style="color:#569cd6;">&amp;</span><span>ty.path) {
+</span><span>        </span><span style="color:#608b4e;">// Option&lt;String&gt; =&gt; Option&lt;&amp;str&gt; (.as_deref())
+</span><span>        Some(Type::Path(TypePath { path, </span><span style="color:#569cd6;">.. </span><span>})) </span><span style="color:#569cd6;">if</span><span> path.is_ident(</span><span style="color:#d69d85;">&quot;String&quot;</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>(
+</span><span>            quote! { ::std::option::Option&lt;</span><span style="color:#569cd6;">&amp;</span><span>::core::primitive::</span><span style="color:#569cd6;">str</span><span>&gt; },
+</span><span>            quote! { self.</span><span style="color:#569cd6;">#</span><span>field_name.as_deref() },
+</span><span>        ),
+</span><span>        </span><span style="color:#608b4e;">// Option&lt;T&gt; =&gt; Option&lt;&amp;T&gt; (.as_ref())
+</span><span>        Some(inner_ty) </span><span style="color:#569cd6;">=&gt; </span><span>(
+</span><span>            quote! { ::std::option::Option&lt;</span><span style="color:#569cd6;">&amp;</span><span style="color:#ff3333;">#</span><span>inner_ty&gt; },
+</span><span>            quote! { self.</span><span style="color:#569cd6;">#</span><span>field_name.as_ref() },
+</span><span>        ),
+</span><span>        None </span><span style="color:#569cd6;">=&gt; </span><span>(quote! { </span><span style="color:#569cd6;">&amp;#</span><span>ty }, quote! { </span><span style="color:#569cd6;">&amp;</span><span>self.</span><span style="color:#569cd6;">#</span><span>field_name }),
+</span><span>    },
+</span><span>    ty </span><span style="color:#569cd6;">=&gt; </span><span>(quote! { </span><span style="color:#569cd6;">&amp;#</span><span>ty }, quote! { </span><span style="color:#569cd6;">&amp;</span><span>self.</span><span style="color:#569cd6;">#</span><span>field_name }),
+</span><span>};
+</span><span>
+</span><span>quote! {
+</span><span>    </span><span style="color:#569cd6;">pub fn #</span><span>field_name(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">#</span><span>return_ty {
+</span><span>        </span><span style="color:#569cd6;">#</span><span>body
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>with the helper function <code>option_inner_type</code> being defined as</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>syn::{GenericArgument, PathArguments};
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>option_inner_type(path: </span><span style="color:#569cd6;">&amp;</span><span>Path) -&gt; Option&lt;</span><span style="color:#569cd6;">&amp;</span><span>Type&gt; {
+</span><span>    </span><span style="color:#569cd6;">if</span><span> path.leading_colon.is_some() {
+</span><span>        </span><span style="color:#569cd6;">return </span><span>None;
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">if</span><span> path.segments.len() != </span><span style="color:#b5cea8;">1 </span><span style="color:#569cd6;">||</span><span> path.segments[</span><span style="color:#b5cea8;">0</span><span>].ident != </span><span style="color:#d69d85;">&quot;Option&quot; </span><span>{
+</span><span>        </span><span style="color:#569cd6;">return </span><span>None;
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> ab = </span><span style="color:#569cd6;">match &amp;</span><span>path.segments[</span><span style="color:#b5cea8;">0</span><span>].arguments {
+</span><span>        PathArguments::AngleBracketed(ab) </span><span style="color:#569cd6;">=&gt;</span><span> ab,
+</span><span>        </span><span style="color:#569cd6;">_ =&gt; return </span><span>None,
+</span><span>    };
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">if</span><span> ab.args.len() != </span><span style="color:#b5cea8;">1 </span><span>{
+</span><span>        </span><span style="color:#569cd6;">return </span><span>None;
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">match &amp;</span><span>ab.args[</span><span style="color:#b5cea8;">0</span><span>] {
+</span><span>        GenericArgument::Type(t) </span><span style="color:#569cd6;">=&gt; </span><span>Some(t),
+</span><span>        </span><span style="color:#569cd6;">_ =&gt; </span><span>None,
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>As you can see, things can get more complex quickly even though we barely
+special-cased any types, and maybe you also noticed that we're currently only
+applying the special cases to <code>String</code>s and <code>Option</code>s that are referred to as
+exactly that (i.e., qualifying <code>Option</code> as <code>std::option::Option</code> will bypass the
+special case).</p>
+<div class="info">
+<p>Note that, as mentioned <a href="/proc-macro-basics/#a-note-on-macro-expansion">last time</a>, it is impossible to apply these kinds of
+special cases correctly under all circumstances. Users could always shadow
+<code>std</code>s <code>Option</code> or <code>String</code> types, or even builtin types like <code>u8</code>.</p>
+<p>When you want to explicitly use one of the <code>std</code> / <code>core</code> types, you can do so
+with absolute paths, but knowing what type names from the input resolve to is
+simply impossible.</p>
+</div>
+<p>I hope this extended example was a good showcase for what to expect from reading
+or writing real-world proc-macro code. In the end it's still all regular Rust
+code that inspects a few data structures with the only "magic" being inside
+<code>quote!</code>.</p>
+<p>The full code after these changes can be found <a href="https://github.com/jplatte/proc-macro-blog-examples/tree/simple-derive-ext-v1/derive_getters">here</a>.</p>
+<div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup>
+<p>Instead of <code>let input = parse_macro_input!(input as DeriveInput);</code>, we could also have written <code>let input: DeriveInput = parse_macro_input!(input);</code>. This still seems less common, so I went with the former.</p>
+</div>
+<div class="footnote-definition" id="2"><sup class="footnote-definition-label">2</sup>
+<p>A derive macro's input failing to parse as <code>syn::DeriveInput</code> is highly unlikely, but possible: Either simply because of a bug in syn, or because the version of syn that's being used is too old to be aware of newer syntax features.</p>
+</div>
+
+</article>
+
+<ul class="other-post-links">
+    
+    <li class="previous-post">
+        <small>Previous post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-basics&#x2F;">Procedural Macros: The Basics</a>
+    </li>
+    
+    
+    <li class="next-post">
+        <small>Next post</small>
+        <a href="https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-error-handling&#x2F;">Procedural Macros: Error handling</a>
+    </li>
+    
+</ul>
+
+
+        <div class="bg" aria-hidden="true" tabindex="-1">
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+            <t><​></t>
+            <u><​></u>
+            <r><​></r>
+            <b><​></b>
+            <o><​></o>
+            <f><​></f>
+            <i><​></i>
+            <s><​></s>
+            <h><​></h>
+        
+        </div>
+    </div>
+
+    <aside class="sidebar">
+    <small>This blog is written by</small>
+    <div class="author">
+        <img class="author-icon" src="&#x2F;img&#x2F;jplatte.png" alt="">
+        <span class="author-name">Jonas Platte</span>
+    </div>
+
+    <div class="about">
+        <p>I am the creator of <a href="https://turbo.fish/">turbo.fish</a> and <a href="https://caniuse.rs/">caniuse.rs</a>. You may also know me
+because of my involvement with the <a href="https://ruma.dev/">Ruma</a> project.</p>
+
+    </div>
+
+    <ul class="ext-links">
+    
+        <li>
+            <small>sourcehut</small><br>
+            <a href="https:&#x2F;&#x2F;git.sr.ht&#x2F;~jplatte&#x2F;">~jplatte</a>
+        </li>
+    
+        <li>
+            <small>github</small><br>
+            <a href="https:&#x2F;&#x2F;github.com&#x2F;jplatte">jplatte</a>
+        </li>
+    
+        <li>
+            <small>liberapay</small><br>
+            <a href="https:&#x2F;&#x2F;liberapay.com&#x2F;jplatte&#x2F;">jplatte</a>
+        </li>
+    
+    </ul>
+
+    <div class="rss">
+        <a href="/rss.xml"><svg viewBox="0 0 1536 1536" width="13" height="13" xmlns="http://www.w3.org/2000/svg">
+    <title>News feed (Atom)</title>
+    <path d="M384 1344c0 106-86 192-192 192S0 1450 0 1344s86-192 192-192 192 86 192 192zm512 123c1 18-5 35-17 48-12 14-29 21-47 21H697c-33 0-60-25-63-58-29-305-271-547-576-576-33-3-58-30-58-63V704c0-18 7-35 21-47 11-11 27-17 43-17h5c213 17 414 110 565 262 152 151 245 352 262 565zm512 2c1 17-5 34-18 47-12 13-28 20-46 20h-143c-34 0-62-26-64-60C1104 895 641 432 60 398c-34-2-60-30-60-63V192c0-18 7-34 20-46 12-12 28-18 44-18h3c350 18 679 165 927 414 249 248 396 577 414 927z"/>
+</svg>RSS Feed</a>
+    </div>
+
+    <div class="sidebar-footer">
+        <small>Built using <a href="https://www.getzola.org/">Zola</a></small>
+    </div>
+</aside>
+
+</div>
+
+</html>

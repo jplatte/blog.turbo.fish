@@ -1,0 +1,1443 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+    <channel>
+      <title>blog.turbo.fish</title>
+      <link>https://blog.turbo.fish</link>
+      <description>Jonas Platte&#x27;s personal blog</description>
+      <generator>Zola</generator>
+      <language>en</language>
+      <atom:link href="https://blog.turbo.fish/rss.xml" rel="self" type="application/rss+xml"/>
+      <lastBuildDate>Sat, 25 Dec 2021 00:00:00 +0000</lastBuildDate>
+      <item>
+          <title>Procedural Macros: Parsing custom syntax</title>
+          <pubDate>Sat, 25 Dec 2021 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://blog.turbo.fish/proc-macro-parsing/</link>
+          <guid>https://blog.turbo.fish/proc-macro-parsing/</guid>
+          <description xml:base="https://blog.turbo.fish/proc-macro-parsing/">&lt;p&gt;This is the fourth article in my series about procedural macros. In this
+article, I will explain how you can use &lt;code&gt;syn&lt;&#x2F;code&gt; to parse things that are not Rust
+code. It will once again extend the &lt;code&gt;Getters&lt;&#x2F;code&gt; derive macro (which generates get
+methods for a struct&#x27;s fields) from the previous two articles&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;&#x2F;proc-macro-simple-derive&#x2F;&quot;&gt;Procedural Macros: A simple derive macro&lt;&#x2F;a&gt; and&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;&#x2F;proc-macro-error-handling&#x2F;&quot;&gt;Procedural Macros: Error handling&lt;&#x2F;a&gt;,&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;so it&#x27;s easier to follow along if you&#x27;ve read them already, but it should be
+understandable on its own if you are already somewhat familiar with writing
+proc-macros using &lt;code&gt;syn&lt;&#x2F;code&gt; &amp;amp; &lt;code&gt;quote&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;why-use-custom-parsing&quot;&gt;Why use custom parsing?&lt;&#x2F;h2&gt;
+&lt;p&gt;In the last article, we added a custom attribute for our derive macro that uses
+the syntax &lt;code&gt;#[getter(name = &quot;foo&quot;)]&lt;&#x2F;code&gt;. But what if we decide it should really be
+&lt;code&gt;#[getter(name = foo)]&lt;&#x2F;code&gt;, because why would you have to quote the name?&lt;&#x2F;p&gt;
+&lt;p&gt;This won&#x27;t work with &lt;code&gt;syn&lt;&#x2F;code&gt;s &lt;code&gt;Meta&lt;&#x2F;code&gt; type because it predates &lt;a href=&quot;https:&#x2F;&#x2F;blog.rust-lang.org&#x2F;2019&#x2F;04&#x2F;11&#x2F;Rust-1.34.0.html#custom-attributes-accept-arbitrary-token-streams&quot;&gt;support for
+arbitrary token streams in proc-macro attributes&lt;&#x2F;a&gt;
+in the Rust compiler and arbitrary token streams can&#x27;t really have a
+representation that is similarily easy to pattern match on. That is why we need
+some parsing code to extract the data we want from the attribute now.&lt;&#x2F;p&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;Note that custom attribute arguments are not the only use case for parsing
+custom syntax. Perhaps more importantly, you can have your own
+&lt;span class=&quot;abbrev&quot; title=&quot;domain-specific languages&quot;&gt;DSLs&lt;&#x2F;span&gt; within
+function-like macros (or attributes). An advanced example of this is &lt;a href=&quot;https:&#x2F;&#x2F;yew.rs&#x2F;&quot;&gt;Yew&lt;&#x2F;a&gt;&#x27;s
+&lt;a href=&quot;https:&#x2F;&#x2F;yew.rs&#x2F;concepts&#x2F;html&#x2F;introduction&quot;&gt;&lt;code&gt;html!&lt;&#x2F;code&gt; macro&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;h2 id=&quot;syn-parsing-basics&quot;&gt;&lt;code&gt;syn&lt;&#x2F;code&gt; parsing basics&lt;&#x2F;h2&gt;
+&lt;p&gt;In the previous article when the attribute was added, attribute parsing was a
+single line of code out of &amp;gt;30 lines of attribute handling code:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;get_name_attr(attr: &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;Attribute) -&amp;gt; syn::Result&amp;lt;Option&amp;lt;Ident&amp;gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Parsing into `syn::Meta`:
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; meta = attr.parse_meta()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Pattern matching and error handling…
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;When parsing into our own type, we can avoid all of the pattern matching and
+even get some pretty good error handling &quot;for free&quot;, but depending on the syntax
+you want to parse, the parsing code can take a little while to get right.&lt;&#x2F;p&gt;
+&lt;p&gt;First thing first though: We need a type to parse the &lt;code&gt;#[getter(name = foo)]&lt;&#x2F;code&gt;
+attribute into. Since the attribute is not mandatory and other arguments to it
+might reasonably be added in the future, we will make it a struct with an
+optional &lt;code&gt;name&lt;&#x2F;code&gt; field:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span&gt;GetterMeta {
+&lt;&#x2F;span&gt;&lt;span&gt;    name: Option&amp;lt;Ident&amp;gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Luckily when it comes to the parsing code, all we have to parse for now is
+&lt;code&gt;name = &amp;lt;identifier&amp;gt;&lt;&#x2F;code&gt;; this is because &lt;code&gt;syn&lt;&#x2F;code&gt; already takes care of parsing
+the attribute&#x27;s name and giving us only the argument list to parse when using
+&lt;code&gt;Attribute::parse_args&lt;&#x2F;code&gt;. Here&#x27;s an illustration from
+&lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;syn&#x2F;latest&#x2F;syn&#x2F;struct.Attribute.html#method.parse_args&quot;&gt;the documentation for that method&lt;&#x2F;a&gt;:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot;&gt;&lt;code&gt;&lt;span&gt;#[my_attr(value &amp;lt; 5)]
+&lt;&#x2F;span&gt;&lt;span&gt;          ^^^^^^^^^ what gets parsed
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;There is a trait we have to implement to make &lt;code&gt;GetterMeta&lt;&#x2F;code&gt; usable with
+&lt;code&gt;Attribute::parse_args&lt;&#x2F;code&gt;, and it&#x27;s called &lt;code&gt;Parse&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::parse::{Parse, ParseStream};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;Parse &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;for &lt;&#x2F;span&gt;&lt;span&gt;GetterMeta {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;parse(input: ParseStream&amp;lt;&amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt;) -&amp;gt; syn::Result&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;        todo!()
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Now for the actual parsing code… It is so simple you might wonder why you
+would ever bother with &lt;code&gt;syn::Meta&lt;&#x2F;code&gt; (spoiler: it&#x27;s not always this simple).&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::{Ident, Token};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;parse(input: ParseStream&amp;lt;&amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt;) -&amp;gt; syn::Result&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Parse the argument name
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; arg_name: Ident = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; arg_name != &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;name&amp;quot; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Same error as before when encountering an unsupported attribute
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span&gt;Err(syn::Error::new_spanned(
+&lt;&#x2F;span&gt;&lt;span&gt;            arg_name,
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;unsupported getter attribute, expected `name`&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;        ));
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Parse (and discard the span of) the `=` token
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let _&lt;&#x2F;span&gt;&lt;span&gt;: Token&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;!&lt;&#x2F;span&gt;&lt;span&gt;[=] = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Parse the argument value
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; name = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    Ok(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self &lt;&#x2F;span&gt;&lt;span&gt;{ name: Some(name) })
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;If you are wondering about the &lt;code&gt;Token&lt;&#x2F;code&gt; macro above: It is simply a nice and easy
+way to refer to the types in &lt;code&gt;syn&lt;&#x2F;code&gt;s &lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;syn&#x2F;1.0&#x2F;syn&#x2F;token&#x2F;index.html&quot;&gt;&lt;code&gt;token&lt;&#x2F;code&gt; module&lt;&#x2F;a&gt;. See
+&lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;syn&#x2F;1.0&#x2F;syn&#x2F;macro.Token.html&quot;&gt;its documentation&lt;&#x2F;a&gt; for more information.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;p&gt;If the parsing fails, for example because of a literal instead of an identifier
+after the &lt;code&gt;=&lt;&#x2F;code&gt;, the error message will look like this:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot;&gt;&lt;code&gt;&lt;span&gt;error: expected identifier
+&lt;&#x2F;span&gt;&lt;span&gt; --&amp;gt; derive_getters&#x2F;tests&#x2F;news_feed.rs:7:21
+&lt;&#x2F;span&gt;&lt;span&gt;  |
+&lt;&#x2F;span&gt;&lt;span&gt;7 |     #[getter(name = &amp;quot;category&amp;quot;)]
+&lt;&#x2F;span&gt;&lt;span&gt;  |                     ^^^^^^^^^^
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Now just update the &lt;code&gt;get_name_attr&lt;&#x2F;code&gt; implementation:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;get_name_attr(attr: &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;Attribute) -&amp;gt; syn::Result&amp;lt;Option&amp;lt;Ident&amp;gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; meta: GetterMeta = attr.parse_args()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;    Ok(meta.name)
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;… and parsing of &lt;code&gt;#[getter(name = foo)]&lt;&#x2F;code&gt; works!&lt;&#x2F;p&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;If you are reading this separate from &lt;a href=&quot;&#x2F;proc-macro-error-handling&#x2F;&quot;&gt;the previous article&lt;&#x2F;a&gt; and
+need a quick reminder on how this function fits in with the rest of the macro
+code, you can have a look at the full code including the changes from above
+&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&#x2F;tree&#x2F;544fdff61c8fa579f747acece7e21fc40fc20776&#x2F;derive_getters&quot;&gt;here&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;If you are interested in a small trick that allows you to change the intended
+syntax of a macro like here in a way that only shows a deprecation warning for
+uses of the previous style rather than breaking those uses, have a look at
+&lt;a href=&quot;https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-parsing&#x2F;#appendix-deprecating-custom-syntax&quot;&gt;the appendix&lt;&#x2F;a&gt; (though I recommend going
+through the rest of the article first).&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;h2 id=&quot;branching&quot;&gt;Branching&lt;&#x2F;h2&gt;
+&lt;p&gt;Now that the most basic case is covered, how about something a little more
+complex? Let&#x27;s say we want to add support for setting the visibility of a
+generated getter function via &lt;code&gt;#[getter(vis = &amp;lt;visibility&amp;gt;)]&lt;&#x2F;code&gt;. Of course
+specifying both a custom name and visibility at the same time should be
+supported too, in whatever order the user prefers. That means error handling
+won&#x27;t be the only kind of branching needed anymore.&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Previous possibility:
+&lt;&#x2F;span&gt;&lt;span&gt;#[getter(name &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2F;span&gt;&lt;span&gt; foo)]
+&lt;&#x2F;span&gt;&lt;span&gt;field: Ty,
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; New possibilities: (1)
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Override only the visibility of a generated getter
+&lt;&#x2F;span&gt;&lt;span&gt;#[getter(vis &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span&gt;pub(crate))]
+&lt;&#x2F;span&gt;&lt;span&gt;field: Ty,
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; New possibilities: (2)
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Override name and visibility in separate attributes
+&lt;&#x2F;span&gt;&lt;span&gt;#[getter(name &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2F;span&gt;&lt;span&gt; foo)]
+&lt;&#x2F;span&gt;&lt;span&gt;#[getter(vis &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span&gt;pub(crate))]
+&lt;&#x2F;span&gt;&lt;span&gt;field: Ty,
+&lt;&#x2F;span&gt;&lt;span&gt;#[getter(vis &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span&gt;pub(crate))]
+&lt;&#x2F;span&gt;&lt;span&gt;#[getter(name &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2F;span&gt;&lt;span&gt; foo)]
+&lt;&#x2F;span&gt;&lt;span&gt;field: Ty,
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; New possibilities: (3)
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Override name and visibility in a single attribute
+&lt;&#x2F;span&gt;&lt;span&gt;#[getter(name &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2F;span&gt;&lt;span&gt; foo, vis &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span&gt;pub(crate))]
+&lt;&#x2F;span&gt;&lt;span&gt;field: Ty,
+&lt;&#x2F;span&gt;&lt;span&gt;#[getter(vis &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span&gt;pub(crate), name &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2F;span&gt;&lt;span&gt; foo)]
+&lt;&#x2F;span&gt;&lt;span&gt;field: Ty,
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The first thing we need to do to support any of these is add another field to
+the &lt;code&gt;GetterMeta&lt;&#x2F;code&gt; struct:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::Visibility;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span&gt;GetterMeta {
+&lt;&#x2F;span&gt;&lt;span&gt;    name: Option&amp;lt;Ident&amp;gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;    vis: Option&amp;lt;Visibility&amp;gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Adding support for case (1) doesn&#x27;t require much work, the &lt;code&gt;Parse&lt;&#x2F;code&gt;
+implementation for &lt;code&gt;GetterMeta&lt;&#x2F;code&gt; simply needs one more branch:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;Parse &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;for &lt;&#x2F;span&gt;&lt;span&gt;GetterMeta {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;parse(input: ParseStream&amp;lt;&amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt;) -&amp;gt; syn::Result&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; arg_name: Ident = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; arg_name == &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;name&amp;quot; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let _&lt;&#x2F;span&gt;&lt;span&gt;: Token&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;!&lt;&#x2F;span&gt;&lt;span&gt;[=] = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; name = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;            Ok(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self &lt;&#x2F;span&gt;&lt;span&gt;{ name: Some(name), vis: None })
+&lt;&#x2F;span&gt;&lt;span&gt;        } &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;else if&lt;&#x2F;span&gt;&lt;span&gt; arg_name == &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;vis&amp;quot; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let _&lt;&#x2F;span&gt;&lt;span&gt;: Token&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;!&lt;&#x2F;span&gt;&lt;span&gt;[=] = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; vis = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;            Ok(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self &lt;&#x2F;span&gt;&lt;span&gt;{ name: None, vis: Some(vis) })
+&lt;&#x2F;span&gt;&lt;span&gt;        } &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;else &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;            Err(syn::Error::new_spanned(
+&lt;&#x2F;span&gt;&lt;span&gt;                arg_name,
+&lt;&#x2F;span&gt;&lt;span&gt;                &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;unsupported getter attribute, expected `name` or `vis`&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;            ))
+&lt;&#x2F;span&gt;&lt;span&gt;        }
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;For case (2), we introduce &lt;code&gt;GetterMeta::merge&lt;&#x2F;code&gt; as a way to reduce two
+&lt;code&gt;GetterMeta&lt;&#x2F;code&gt;s to one, raising an error if one of the arguments is provided
+multiple times:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;quote::ToTokens;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;GetterMeta {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;merge(self, other: GetterMeta) -&amp;gt; syn::Result&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;either&amp;lt;T: ToTokens&amp;gt;(a: Option&amp;lt;T&amp;gt;, b: Option&amp;lt;T&amp;gt;) -&amp;gt; syn::Result&amp;lt;Option&amp;lt;T&amp;gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match &lt;&#x2F;span&gt;&lt;span&gt;(a, b) {
+&lt;&#x2F;span&gt;&lt;span&gt;                (None, None) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;Ok(None),
+&lt;&#x2F;span&gt;&lt;span&gt;                (Some(val), None) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;| &lt;&#x2F;span&gt;&lt;span&gt;(None, Some(val)) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;Ok(Some(val)),
+&lt;&#x2F;span&gt;&lt;span&gt;                (Some(a), Some(b)) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;                    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let mut&lt;&#x2F;span&gt;&lt;span&gt; error =
+&lt;&#x2F;span&gt;&lt;span&gt;                        syn::Error::new_spanned(a, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;redundant attribute argument&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;);
+&lt;&#x2F;span&gt;&lt;span&gt;                    error.combine(syn::Error::new_spanned(b, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;note: first one here&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;));
+&lt;&#x2F;span&gt;&lt;span&gt;                    Err(error)
+&lt;&#x2F;span&gt;&lt;span&gt;                }
+&lt;&#x2F;span&gt;&lt;span&gt;            }
+&lt;&#x2F;span&gt;&lt;span&gt;        }
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;        Ok(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;            name: either(self.name, other.name)&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;            vis: either(self.vis, other.vis)&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;        })
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;To test your error handling, have a look at the &lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;trybuild&quot;&gt;trybuild crate&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;p&gt;Then comes the adjustment of the actual getter method generation. Here is the
+&lt;em&gt;previous&lt;&#x2F;em&gt; code for that:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; attrs: Vec&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt; =
+&lt;&#x2F;span&gt;&lt;span&gt;    f.attrs.iter().filter(|attr| attr.path.is_ident(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;getter&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;)).collect();
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; name_from_attr = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match&lt;&#x2F;span&gt;&lt;span&gt; attrs.len() {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;None,
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;get_name_attr(attrs[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span&gt;])&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_ =&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let mut&lt;&#x2F;span&gt;&lt;span&gt; error =
+&lt;&#x2F;span&gt;&lt;span&gt;            syn::Error::new_spanned(attrs[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span&gt;], &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;redundant `getter(name)` attribute&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;);
+&lt;&#x2F;span&gt;&lt;span&gt;        error.combine(syn::Error::new_spanned(attrs[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span&gt;], &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;note: first one here&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;));
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span&gt;Err(error);
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; method_name =
+&lt;&#x2F;span&gt;&lt;span&gt;    name_from_attr.unwrap_or_else(|| f.ident.clone().expect(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;a named field&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;));
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; field_name = f.ident;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; field_ty = f.ty;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;Ok(quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn #&lt;&#x2F;span&gt;&lt;span&gt;method_name(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;#&lt;&#x2F;span&gt;&lt;span&gt;field_ty {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;})
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Now that we want to check all of the attributes, we no longer need to first
+check how many &lt;code&gt;getter&lt;&#x2F;code&gt; attributes there are, we can simply parse all of them
+and fold them into one using the new &lt;code&gt;merge&lt;&#x2F;code&gt; method:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; meta: GetterMeta = f
+&lt;&#x2F;span&gt;&lt;span&gt;    .attrs
+&lt;&#x2F;span&gt;&lt;span&gt;    .iter()
+&lt;&#x2F;span&gt;&lt;span&gt;    .filter(|attr| attr.path.is_ident(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;getter&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;))
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; First create an initial empty GetterMeta (using a derived Default impl).
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Then try parsing the attributes one-by-one and merging them into that
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; instance, stopping if there is an errors from either `.parse_args()` or
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; `.merge()` and propagating the first error (if any) out of this code with
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; the second `?`.
+&lt;&#x2F;span&gt;&lt;span&gt;    .try_fold(GetterMeta::default(), |meta, attr| meta.merge(attr.parse_args()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;))&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Extract visibility argument in addition to name (falling back to `pub`)
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; visibility = meta.vis.unwrap_or_else(|| parse_quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub &lt;&#x2F;span&gt;&lt;span&gt;});
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; method_name =
+&lt;&#x2F;span&gt;&lt;span&gt;    meta.name.unwrap_or_else(|| f.ident.clone().expect(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;a named field&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;));
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; field_name = f.ident;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; field_ty = f.ty;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;Ok(quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; vvvvv Usage of visibility argument
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;visibility &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn #&lt;&#x2F;span&gt;&lt;span&gt;method_name(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;#&lt;&#x2F;span&gt;&lt;span&gt;field_ty {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;})
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;There&#x27;s of course many alternative ways to solve this, but I found &lt;code&gt;try_fold&lt;&#x2F;code&gt; to
+be the most elegant solution after some experimentation.&lt;&#x2F;p&gt;
+&lt;p&gt;Now onto case (3)…&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;lists&quot;&gt;Lists&lt;&#x2F;h2&gt;
+&lt;p&gt;One way of dealing with the case of multiple arguments in one attribute would be
+to write a parsing loop and call &lt;code&gt;input.parse()?&lt;&#x2F;code&gt; for the list delimiters like
+for the argument names, &lt;code&gt;=&lt;&#x2F;code&gt; tokens and argument values. However, it is often
+easier to use syn&#x27;s &lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;syn&#x2F;latest&#x2F;syn&#x2F;punctuated&#x2F;struct.Punctuated.html&quot;&gt;&lt;code&gt;Punctuated&lt;&#x2F;code&gt;&lt;&#x2F;a&gt; type for this, which is similar to a &lt;code&gt;Vec&lt;&#x2F;code&gt;
+except it has a second generic argument for a delimiter that separates list
+elements and can be used for parsing through a few associated functions.&lt;&#x2F;p&gt;
+&lt;p&gt;Depending on the task at hand, we might want to create an enum that represents a
+single argument to the derive macro, but in this case we can just reuse the
+existing logic and simply parse a &lt;code&gt;GetterMeta&lt;&#x2F;code&gt; that always has exactly one field
+set to &lt;code&gt;Some&lt;&#x2F;code&gt;, then use the &lt;code&gt;merge&lt;&#x2F;code&gt; function created above to collect them into
+a &lt;code&gt;GetterMeta&lt;&#x2F;code&gt; with all the arguments for a given field.&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Before
+&lt;&#x2F;span&gt;&lt;span&gt;.try_fold(GetterMeta::default(), |meta, attr| meta.merge(attr.parse_args()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;))&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F;&#x2F; After
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::punctuated::Punctuated;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;.try_fold(GetterMeta::default(), |meta, attr| {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; list: Punctuated&amp;lt;GetterMeta, Token&lt;&#x2F;span&gt;&lt;span style=&quot;color:#ff3333;&quot;&gt;!&lt;&#x2F;span&gt;&lt;span&gt;[,]&amp;gt; =
+&lt;&#x2F;span&gt;&lt;span&gt;        attr.parse_args_with(Punctuated::parse_terminated)&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    list.into_iter().try_fold(meta, GetterMeta::merge)
+&lt;&#x2F;span&gt;&lt;span&gt;})&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;h2 id=&quot;lookahead&quot;&gt;Lookahead&lt;&#x2F;h2&gt;
+&lt;p&gt;One more thing I want to go over before concluding this article is lookahead. In
+the &lt;code&gt;GetterMeta&lt;&#x2F;code&gt; parsing code above, we started off by parsing an identifier
+because regardless of whether we are parsing a name or visibility argument, it
+starts with &lt;code&gt;name&lt;&#x2F;code&gt; or &lt;code&gt;vis&lt;&#x2F;code&gt; which can both be parsed to &lt;code&gt;Ident&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;However, &lt;code&gt;syn&lt;&#x2F;code&gt; also provides ways of trying different parsers on the next token
+in the input in the form of &lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;syn&#x2F;1.0&#x2F;syn&#x2F;parse&#x2F;struct.ParseBuffer.html#method.lookahead1&quot;&gt;&lt;code&gt;ParseStream::lookahead1&lt;&#x2F;code&gt;&lt;&#x2F;a&gt;. This even
+applies to our case since what we really want to do is parse either exactly
+&lt;code&gt;name&lt;&#x2F;code&gt;, or exactly &lt;code&gt;vis&lt;&#x2F;code&gt;; not an arbitrary identifier. We can create custom
+keyword types for each using &lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;syn&#x2F;1.0&#x2F;syn&#x2F;macro.custom_keyword.html&quot;&gt;the &lt;code&gt;custom_keyword&lt;&#x2F;code&gt; macro&lt;&#x2F;a&gt; and
+then try parsing each of them:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;mod &lt;&#x2F;span&gt;&lt;span&gt;kw {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::custom_keyword;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    custom_keyword!(name);
+&lt;&#x2F;span&gt;&lt;span&gt;    custom_keyword!(vis);
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;Parse &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;for &lt;&#x2F;span&gt;&lt;span&gt;GetterMeta {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;parse(input: ParseStream&amp;lt;&amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt;) -&amp;gt; syn::Result&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; lookahead = input.lookahead1();
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; lookahead.peek(kw::name) {
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let _&lt;&#x2F;span&gt;&lt;span&gt;: kw::name = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let _&lt;&#x2F;span&gt;&lt;span&gt;: Token&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;!&lt;&#x2F;span&gt;&lt;span&gt;[=] = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; name = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;            Ok(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self &lt;&#x2F;span&gt;&lt;span&gt;{ name: Some(name), vis: None })
+&lt;&#x2F;span&gt;&lt;span&gt;        } &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;else if&lt;&#x2F;span&gt;&lt;span&gt; lookahead.peek(kw::vis) {
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let _&lt;&#x2F;span&gt;&lt;span&gt;: kw::vis = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let _&lt;&#x2F;span&gt;&lt;span&gt;: Token&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;!&lt;&#x2F;span&gt;&lt;span&gt;[=] = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; vis = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;            Ok(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self &lt;&#x2F;span&gt;&lt;span&gt;{ name: None, vis: Some(vis) })
+&lt;&#x2F;span&gt;&lt;span&gt;        } &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;else &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; … and we get an appropriate error message for free!
+&lt;&#x2F;span&gt;&lt;span&gt;            Err(lookahead.error())
+&lt;&#x2F;span&gt;&lt;span&gt;        }
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;h2 id=&quot;enough-for-today&quot;&gt;Enough for today?&lt;&#x2F;h2&gt;
+&lt;p&gt;That&#x27;s all that I can think of as being important to know about parsing custom
+syntax with &lt;code&gt;syn&lt;&#x2F;code&gt;. Like in the second article of this series, there&#x27;s a appendix
+here with some tangentially related topics that you might find interesting (so
+this article does not end here), but I hope you now have an idea of how to write
+your own proc-macro parsing code!&lt;&#x2F;p&gt;
+&lt;p&gt;As always, you can review the code shown in this article as a working crate:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&#x2F;tree&#x2F;parsing-v1&#x2F;derive_getters&quot;&gt;Complete code&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&#x2F;compare&#x2F;error-handling-v1...parsing-v1&quot;&gt;Individual commits&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;Although it has taken more than half a year from the last article to this one, I
+still plan to add at least an article about
+&lt;span class=&quot;abbrev&quot; title=&quot;abstract syntax tree&quot;&gt;AST&lt;&#x2F;span&gt; traversal and
+possibly one more after that one. See you next time!&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;em&gt;If you have comments about this article, you can leave them in any of these
+places: &lt;a href=&quot;https:&#x2F;&#x2F;www.reddit.com&#x2F;r&#x2F;rust&#x2F;comments&#x2F;roaofg&#x2F;procedural_macros_parsing_custom_syntax&#x2F;&quot;&gt;reddit&lt;&#x2F;a&gt;, &lt;a href=&quot;https:&#x2F;&#x2F;lemmy.ml&#x2F;post&#x2F;128393&quot;&gt;Lemmy&lt;&#x2F;a&gt;, &lt;a href=&quot;https:&#x2F;&#x2F;users.rust-lang.org&#x2F;t&#x2F;blog-post-procedural-macros-parsing-custom-syntax&#x2F;69400?u=jplatte&quot;&gt;users.rust-lang.org&lt;&#x2F;a&gt; or &lt;a href=&quot;https:&#x2F;&#x2F;twitter.com&#x2F;_jplatte&#x2F;status&#x2F;1474747780937756675&quot;&gt;Twitter&lt;&#x2F;a&gt;.&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;appendix-deprecating-custom-syntax&quot;&gt;Appendix: Deprecating custom syntax&lt;&#x2F;h2&gt;
+&lt;p&gt;Here&#x27;s one more small sub-scenario: Suppose you have already released &lt;code&gt;getters&lt;&#x2F;code&gt;
+v1.0.0 with &lt;code&gt;#[getters(name = &quot;foo&quot;)]&lt;&#x2F;code&gt; attributes and don&#x27;t want to do another
+breaking-change release soon. Yet you want to allow the new syntax without the
+quotes and deprecate the old one. Using &lt;code&gt;.lookahead1()&lt;&#x2F;code&gt; on the input as in the
+&lt;a href=&quot;https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-parsing&#x2F;#lookahead&quot;&gt;Lookahead&lt;&#x2F;a&gt; section above, it is pretty straight-forward to allow
+both an identifier and a string literal in parsing:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Inside the `kw::name` branch:
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let _&lt;&#x2F;span&gt;&lt;span&gt;: kw::name = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let _&lt;&#x2F;span&gt;&lt;span&gt;: Token&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;!&lt;&#x2F;span&gt;&lt;span&gt;[=] = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; New: Parse identifier either directly or from string literal
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; lookahead = input.lookahead1();
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let &lt;&#x2F;span&gt;&lt;span&gt;(name, deprecated_name_syntax) = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; lookahead.peek(Ident) {
+&lt;&#x2F;span&gt;&lt;span&gt;    (input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;false&lt;&#x2F;span&gt;&lt;span&gt;)
+&lt;&#x2F;span&gt;&lt;span&gt;} &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;else if&lt;&#x2F;span&gt;&lt;span&gt; lookahead.peek(LitStr) {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; s: LitStr = input.parse()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; span = s.span(); &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; We will need this span for error reporting
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let mut&lt;&#x2F;span&gt;&lt;span&gt; name: Ident =
+&lt;&#x2F;span&gt;&lt;span&gt;        syn::parse_str(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;s.value()).map_err(|e| syn::Error::new_spanned(s, e))&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;    name.set_span(span);
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    (name, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;true&lt;&#x2F;span&gt;&lt;span&gt;)
+&lt;&#x2F;span&gt;&lt;span&gt;} &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;else &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span&gt;Err(lookahead.error());
+&lt;&#x2F;span&gt;&lt;span&gt;};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;Ok(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self &lt;&#x2F;span&gt;&lt;span&gt;{ name: Some(name), vis: None })
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Deprecating the one form now just requires a little extra trick: First we
+capture whether the deprecated name syntax was used in &lt;code&gt;GetterMeta&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span&gt;GetterMeta {
+&lt;&#x2F;span&gt;&lt;span&gt;    name: Option&amp;lt;Ident&amp;gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;    vis: Option&amp;lt;Visibility&amp;gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Set this to true through the `LitStr` branch
+&lt;&#x2F;span&gt;&lt;span&gt;    deprecated_name_syntax: &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;bool&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;… and then emitting the deprecation warning if that flag is set by generating a
+call to a deprecated function that uses the span of that attribute:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; deprecation_note = meta.deprecated_name_syntax.then(|| {
+&lt;&#x2F;span&gt;&lt;span&gt;    quote_spanned! {method_name&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt;
+&lt;&#x2F;span&gt;&lt;span&gt;        #[deprecated &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;Using a string literal as a name attribute is deprecated.\
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;            Use an identifier instead (remove the quotes).&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;]
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;name_literal() {}
+&lt;&#x2F;span&gt;&lt;span&gt;        name_literal();
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;});
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;Ok(quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;visibility &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn #&lt;&#x2F;span&gt;&lt;span&gt;method_name(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;#&lt;&#x2F;span&gt;&lt;span&gt;field_ty {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;deprecation_note
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;})
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This is what a warning generated this way will look like:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot;&gt;&lt;code&gt;&lt;span&gt;warning: use of deprecated function `NewsFeed::category::name_literal`: Using a string literal as a name attribute is deprecated. Use an identifier instead (remove the quotes).
+&lt;&#x2F;span&gt;&lt;span&gt; --&amp;gt; derive_getters&#x2F;tests&#x2F;news_feed.rs:7:21
+&lt;&#x2F;span&gt;&lt;span&gt;  |
+&lt;&#x2F;span&gt;&lt;span&gt;7 |     #[getter(name = &amp;quot;category&amp;quot;)]
+&lt;&#x2F;span&gt;&lt;span&gt;  |                     ^^^^^^^^^^
+&lt;&#x2F;span&gt;&lt;span&gt;  |
+&lt;&#x2F;span&gt;&lt;span&gt;  = note: `#[warn(deprecated)]` on by default
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+</description>
+      </item>
+      <item>
+          <title>Procedural Macros: Error handling</title>
+          <pubDate>Tue, 11 May 2021 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://blog.turbo.fish/proc-macro-error-handling/</link>
+          <guid>https://blog.turbo.fish/proc-macro-error-handling/</guid>
+          <description xml:base="https://blog.turbo.fish/proc-macro-error-handling/">&lt;p&gt;This is the third article in my series about procedural macros. The examples
+here are based on the &lt;code&gt;Getters&lt;&#x2F;code&gt; derive macro from &lt;a href=&quot;&#x2F;proc-macro-simple-derive&#x2F;&quot;&gt;the previous article&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;As the title says, this time I&#x27;ll explain error handling, specifically how to
+use &lt;code&gt;syn::Error&lt;&#x2F;code&gt; to produce errors that will be shown by the compiler as
+originating somewhere in the macro input, rather than pointing at the macro
+invocation.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;a-use-case&quot;&gt;A use case&lt;&#x2F;h2&gt;
+&lt;p&gt;Before we can start adding meaningful spans to parts of the macro input, there
+has to be the possibility for errors other than those already caught by the
+Rust compiler itself. Luckily, there is a common way in which the input of a
+derive macro can be wrong in a way specific to that macro, so I can continue on
+with the previous &lt;code&gt;Getters&lt;&#x2F;code&gt; example rather than coming up with, and explaining,
+a new function-like or attribute proc-macro.&lt;&#x2F;p&gt;
+&lt;p&gt;That common possibility for errors is attributes: Many derive macros come with
+their own attribute(s), and generally they emit an error when one such attribute
+is used incorrectly. For the &lt;code&gt;Getters&lt;&#x2F;code&gt; macro there is one obvious (to me)
+customization possibility that an attribute would enable: Renaming. As such, we
+will add a &lt;code&gt;getter&lt;&#x2F;code&gt; field attribute that is used as &lt;code&gt;#[getter(name = &quot;foo&quot;)]&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;registering-the-attribute&quot;&gt;Registering the attribute&lt;&#x2F;h2&gt;
+&lt;p&gt;The first thing that has to be done before starting to look for attributes in
+the &lt;code&gt;DeriveInput&lt;&#x2F;code&gt; is registering the attribute. By default if &lt;code&gt;rustc&lt;&#x2F;code&gt; encounters
+an unknown attribute, &lt;a href=&quot;https:&#x2F;&#x2F;www.reddit.com&#x2F;r&#x2F;rustjerk&#x2F;comments&#x2F;n7b1gu&quot;&gt;that is an error&lt;&#x2F;a&gt;:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot;&gt;&lt;code&gt;&lt;span&gt;error: cannot find attribute `getter` in this scope
+&lt;&#x2F;span&gt;&lt;span&gt;  --&amp;gt; src&#x2F;ratchet&#x2F;keys.rs:15:7
+&lt;&#x2F;span&gt;&lt;span&gt;   |
+&lt;&#x2F;span&gt;&lt;span&gt;15 |     #[getter(name = &amp;quot;init_vec&amp;quot;)]
+&lt;&#x2F;span&gt;&lt;span&gt;   |       ^^^^^^
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Making that error disappear is as simple as updating the &lt;code&gt;#[proc_macro_derive]&lt;&#x2F;code&gt;
+attribute on our proc-macro entry point:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span&gt;#[proc_macro_derive(Getters, attributes(getter))]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F;                           ^^^^^^^^^^^^^^^^^^ this is new
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;getters(input: TokenStream) -&amp;gt; TokenStream {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; input = parse_macro_input!(input &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;as&lt;&#x2F;span&gt;&lt;span&gt; DeriveInput);
+&lt;&#x2F;span&gt;&lt;span&gt;    expand_getters(input).into()
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;h2 id=&quot;parsing-the-attribute&quot;&gt;Parsing the attribute&lt;&#x2F;h2&gt;
+&lt;p&gt;Since custom parsing is complex enough to deserve its own article, I&#x27;m going to
+use &lt;code&gt;syn::Attribute::parse_meta&lt;&#x2F;code&gt; here, which is sufficient for the syntax shown
+above.&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Note: syn::Ident is a re-export of proc_macro2::Ident
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::{Attribute, Ident};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;get_name_attr(attr: &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;Attribute) -&amp;gt; syn::Result&amp;lt;Option&amp;lt;Ident&amp;gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; meta = attr.parse_meta()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;    todo!()
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The &lt;code&gt;syn::Result&amp;lt;T&amp;gt;&lt;&#x2F;code&gt; type above is simply a type alias for
+&lt;code&gt;Result&amp;lt;T, syn::Error&amp;gt;&lt;&#x2F;code&gt;. Since &lt;code&gt;syn&lt;&#x2F;code&gt;s &lt;code&gt;Meta&lt;&#x2F;code&gt; type can only represent a limited
+subset of the arbitrary token trees allowed within attributes, parsing it is
+fallible, and returns &lt;code&gt;syn::Result&amp;lt;syn::Meta&amp;gt;&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;Luckily detecting whether an attribute is possible without calling any of
+&lt;code&gt;Attribute&lt;&#x2F;code&gt;s &lt;code&gt;parse_&lt;&#x2F;code&gt; methods, so we can detect whether the attribute is for us
+before executing this fallible operation.&lt;&#x2F;p&gt;
+&lt;p&gt;But I&#x27;m getting ahead of myself… First, let&#x27;s add more to our new function.
+Here is what the most common way of constructing a &lt;code&gt;syn::Error&lt;&#x2F;code&gt; looks like (for
+me at least):&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::Meta;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; meta_list = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match&lt;&#x2F;span&gt;&lt;span&gt; meta {
+&lt;&#x2F;span&gt;&lt;span&gt;    Meta::List(list) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt;&lt;&#x2F;span&gt;&lt;span&gt; list,
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; *Almost* equivalent (see syn documentation) to:
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; use syn::spanned::Spanned;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F;   return Err(syn::Error::new(meta.span(), &amp;quot;expected a list-style attribute&amp;quot;))
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_ =&amp;gt; return &lt;&#x2F;span&gt;&lt;span&gt;Err(syn::Error::new_spanned(meta, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;expected a list-style attribute&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;)),
+&lt;&#x2F;span&gt;&lt;span&gt;};
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;As you can see, creating a &lt;code&gt;syn::Error&lt;&#x2F;code&gt; is nothing special.&lt;&#x2F;p&gt;
+&lt;p&gt;The rest of &lt;code&gt;get_name_attr&lt;&#x2F;code&gt; works in much the same way:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::{Lit, NestedMeta};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; nested = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match&lt;&#x2F;span&gt;&lt;span&gt; meta_list.nested.len() {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; `#[getter()]` without any arguments is a no-op
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; return &lt;&#x2F;span&gt;&lt;span&gt;Ok(None),
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;meta_list.nested[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span&gt;],
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_ =&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span&gt;Err(syn::Error::new_spanned(
+&lt;&#x2F;span&gt;&lt;span&gt;            meta_list.nested,
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;currently only a single getter attribute is supported&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;        ));
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; name_value = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match&lt;&#x2F;span&gt;&lt;span&gt; nested {
+&lt;&#x2F;span&gt;&lt;span&gt;    NestedMeta::Meta(Meta::NameValue(nv)) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt;&lt;&#x2F;span&gt;&lt;span&gt; nv,
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_ =&amp;gt; return &lt;&#x2F;span&gt;&lt;span&gt;Err(syn::Error::new_spanned(nested, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;expected `name = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#e3bbab;&quot;&gt;\&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;lt;value&amp;gt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#e3bbab;&quot;&gt;\&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;`&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;)),
+&lt;&#x2F;span&gt;&lt;span&gt;};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if !&lt;&#x2F;span&gt;&lt;span&gt;name_value.path.is_ident(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;name&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;) {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Could also silently ignore the unexpected attribute by returning `Ok(None)`
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span&gt;Err(syn::Error::new_spanned(
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;name_value.path,
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;unsupported getter attribute, expected `name`&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;    ));
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match &amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;name_value.lit {
+&lt;&#x2F;span&gt;&lt;span&gt;    Lit::Str(s) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Parse string contents to `Ident`, reporting an error on the string
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; literal&amp;#39;s span if parsing fails
+&lt;&#x2F;span&gt;&lt;span&gt;        syn::parse_str(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;s.value()).map_err(|e| syn::Error::new_spanned(s, e))
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;    lit &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;Err(syn::Error::new_spanned(lit, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;expected string literal&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;)),
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;h2 id=&quot;adjusting-the-existing-codegen&quot;&gt;Adjusting the existing codegen&lt;&#x2F;h2&gt;
+&lt;p&gt;Now we have a new method to parse &lt;code&gt;#[getter]&lt;&#x2F;code&gt; attributes, but we aren&#x27;t using it
+yet. We need to update the existing code generation logic to take these
+attributes into account, and the first step towards that is making the
+&lt;code&gt;expand_getters&lt;&#x2F;code&gt; function fallible as well.&lt;&#x2F;p&gt;
+&lt;p&gt;If it&#x27;s been some time since you read the last article, here is its signature
+again (you can also review the entire definition &lt;a href=&quot;https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-error-handling&#x2F;simple-derive-v1&quot;&gt;here&lt;&#x2F;a&gt;):&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;expand_getters(input: DeriveInput) -&amp;gt; TokenStream {
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Which now becomes&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;expand_getters(input: DeriveInput) -&amp;gt; syn::Result&amp;lt;TokenStream&amp;gt; {
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The new &lt;code&gt;expand_getters&lt;&#x2F;code&gt; implementation is a bit longer, but still manageable:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Same as before
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; fields = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match&lt;&#x2F;span&gt;&lt;span&gt; input.data {
+&lt;&#x2F;span&gt;&lt;span&gt;    Data::Struct(DataStruct { fields: Fields::Named(fields), &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;.. &lt;&#x2F;span&gt;&lt;span&gt;}) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt;&lt;&#x2F;span&gt;&lt;span&gt; fields.named,
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_ =&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;panic!(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;this derive macro only works on structs with named fields&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;),
+&lt;&#x2F;span&gt;&lt;span&gt;};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; All the new logic comes in here
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; getters = fields
+&lt;&#x2F;span&gt;&lt;span&gt;    .into_iter()
+&lt;&#x2F;span&gt;&lt;span&gt;    .map(|f| {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Collect getter attributes
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; attrs: Vec&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt; =
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; This `.filter` is how we make sure to ignore builtin attributes, or
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; ones meant for consumption by different proc-macros.
+&lt;&#x2F;span&gt;&lt;span&gt;            f.attrs.iter().filter(|attr| attr.path.is_ident(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;getter&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;)).collect();
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; name_from_attr = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match&lt;&#x2F;span&gt;&lt;span&gt; attrs.len() {
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;None,
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;get_name_attr(attrs[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span&gt;])&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Since `#[getter(name = ...)]` is the only available `getter` attribute,
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; we can just assume any attribute with `path.is_ident(&amp;quot;getter&amp;quot;)` is a
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; `getter(name)` attribute.
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F;
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Thus, if there is two `getter` attributes, there is a redundancy
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; which we should report as an error.
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F;
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; On nightly, you could also choose to report a warning and just use one
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; of the attributes, but emitting a warning from a proc-macro is not
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; stable at the time of writing.
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_ =&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;                &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let mut&lt;&#x2F;span&gt;&lt;span&gt; error = syn::Error::new_spanned(
+&lt;&#x2F;span&gt;&lt;span&gt;                    attrs[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span&gt;],
+&lt;&#x2F;span&gt;&lt;span&gt;                    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;redundant `getter(name)` attribute&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;                );
+&lt;&#x2F;span&gt;&lt;span&gt;                &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; `syn::Error::combine` can be used to create an error that spans
+&lt;&#x2F;span&gt;&lt;span&gt;                &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; multiple independent parts of the macro input.
+&lt;&#x2F;span&gt;&lt;span&gt;                error.combine(
+&lt;&#x2F;span&gt;&lt;span&gt;                    syn::Error::new_spanned(attrs[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span&gt;], &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;note: first one here&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;),
+&lt;&#x2F;span&gt;&lt;span&gt;                );
+&lt;&#x2F;span&gt;&lt;span&gt;                &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span&gt;Err(error);
+&lt;&#x2F;span&gt;&lt;span&gt;            }
+&lt;&#x2F;span&gt;&lt;span&gt;        };
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; If there is no `getter(name)` attribute, use the field name like before
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; method_name =
+&lt;&#x2F;span&gt;&lt;span&gt;            name_from_attr.unwrap_or_else(|| f.ident.clone().expect(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;a named field&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;));
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; field_name = f.ident;
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; field_ty = f.ty;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;        Ok(quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn #&lt;&#x2F;span&gt;&lt;span&gt;method_name(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;#&lt;&#x2F;span&gt;&lt;span&gt;field_ty {
+&lt;&#x2F;span&gt;&lt;span&gt;                &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name
+&lt;&#x2F;span&gt;&lt;span&gt;            }
+&lt;&#x2F;span&gt;&lt;span&gt;        })
+&lt;&#x2F;span&gt;&lt;span&gt;    })
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Since `TokenStream` implements `FromIterator&amp;lt;TokenStream&amp;gt;`, concatenating an
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; iterator of token streams without a separator can be using `.collect()` in
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; addition to `quote! { #(#iter)* }`. Through std&amp;#39;s `FromIterator` impl for
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; `Result`, we get short-circuiting on errors on top.
+&lt;&#x2F;span&gt;&lt;span&gt;    .collect::&amp;lt;syn::Result&amp;lt;TokenStream&amp;gt;&amp;gt;()&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;?&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Like before
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; st_name = input.ident;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let &lt;&#x2F;span&gt;&lt;span&gt;(impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Resulting TokenStream wrapped in Ok
+&lt;&#x2F;span&gt;&lt;span&gt;Ok(quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;    #[automatically_derived]
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;#impl_generics #st_name #ty_generics #where_clause {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Previously: #(#getters)*
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F;
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Now we don&amp;#39;t need that anymore since we already
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; collected the getters into a TokenStream above
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;getters
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;})
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;If this is the first time you have seen &lt;code&gt;.collect::&amp;lt;Result&amp;lt;_, _&amp;gt;&amp;gt;&lt;&#x2F;code&gt;, you can find the documentation
+for the trait implementation that makes it possible &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;std&#x2F;result&#x2F;enum.Result.html#impl-FromIterator%3CResult%3CA%2C%20E%3E%3E-for-Result%3CV%2C%20E%3E&quot;&gt;here&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;h2 id=&quot;passing-a-syn-error-to-the-compiler&quot;&gt;Passing a &lt;code&gt;syn::Error&lt;&#x2F;code&gt; to the compiler&lt;&#x2F;h2&gt;
+&lt;p&gt;One final piece of the puzzle is missing: How does &lt;code&gt;syn::Error&lt;&#x2F;code&gt; become a
+compiler error? We can&#x27;t update our proc-macro entry point to return
+&lt;code&gt;syn::Result&lt;&#x2F;code&gt;, that would result in an error because proc-macro entry points are
+required to return just a &lt;code&gt;TokenStream&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;However, the solution is almost as easy and you might already have seen it if
+you had a look at &lt;code&gt;syn::Error&lt;&#x2F;code&gt;s &lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;syn&#x2F;1.0&#x2F;syn&#x2F;parse&#x2F;struct.Error.html&quot;&gt;documentation&lt;&#x2F;a&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Previously, with expand_getters returning proc_macro2::TokenStream
+&lt;&#x2F;span&gt;&lt;span&gt;expand_getters(input).into()
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Now, returning syn::Result&amp;lt;proc_macro2::TokenStream&amp;gt;
+&lt;&#x2F;span&gt;&lt;span&gt;expand_getters(input).unwrap_or_else(syn::Error::into_compile_error).into()
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;What this does under the hood is actually kind of weird: It produces a
+TokenStream like&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span&gt;quote! { compile_error!(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;[user-provided error message]&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;); }
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;but with the span being the one given when constructing the &lt;code&gt;syn::Error&lt;&#x2F;code&gt;. As
+weird as it is, that&#x27;s simply the only way to raise a custom compiler error on
+stable (as of the time of writing).&lt;&#x2F;p&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;If you haven&#x27;t seen &lt;code&gt;compile_error!&lt;&#x2F;code&gt; before, it&#x27;s a &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;std&#x2F;macro.compile_error.html&quot;&gt;builtin macro&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;h2 id=&quot;and-that-s-it&quot;&gt;And that&#x27;s it!&lt;&#x2F;h2&gt;
+&lt;p&gt;That&#x27;s all there really is when it comes to proc-macro specific error handling
+knowledge. Like last time, you can review the changes from this blog post in the
+accompanying repo:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&#x2F;tree&#x2F;error-handling-v1&#x2F;derive_getters&quot;&gt;Complete code&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&#x2F;compare&#x2F;simple-derive-v1...error-handling-v1&quot;&gt;Individual commits&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;If you want to practice your proc-macro skills but haven&#x27;t come up with anything
+to create or contribute to at this point, I recommend having a look at David
+Tolnay&#x27;s &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;dtolnay&#x2F;proc-macro-workshop#readme&quot;&gt;proc-macro-workshop&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;Next time, I will explain how to parse custom syntax, which can be useful for
+derive macros when you want to go beyond what &lt;code&gt;syn::Meta&lt;&#x2F;code&gt; allows, and is crucial
+for many attribute macros as well as the majority of function-like proc-macros.
+Stay tuned!&lt;&#x2F;p&gt;
+</description>
+      </item>
+      <item>
+          <title>Procedural Macros: A simple derive macro</title>
+          <pubDate>Sat, 20 Feb 2021 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://blog.turbo.fish/proc-macro-simple-derive/</link>
+          <guid>https://blog.turbo.fish/proc-macro-simple-derive/</guid>
+          <description xml:base="https://blog.turbo.fish/proc-macro-simple-derive/">&lt;p&gt;This is the second article in my series on procedural macros. If you don&#x27;t know
+what procedural macros are, I highly recommend reading
+&lt;a href=&quot;&#x2F;proc-macro-basics&#x2F;&quot;&gt;the previous article&lt;&#x2F;a&gt; first.&lt;&#x2F;p&gt;
+&lt;p&gt;This article will go through a simple derive macro: &lt;code&gt;Getters&lt;&#x2F;code&gt;.
+&lt;code&gt;#[derive(Getters)]&lt;&#x2F;code&gt; will generate an accessor function for every named field of
+its input struct (it will report an error when used on other kinds of types). So&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span&gt;#[derive(Getters)]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span&gt;NewsFeed {
+&lt;&#x2F;span&gt;&lt;span&gt;    name: String,
+&lt;&#x2F;span&gt;&lt;span&gt;    url: String,
+&lt;&#x2F;span&gt;&lt;span&gt;    category: Option&amp;lt;String&amp;gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;will generate&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;NewsFeed {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;name(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;String {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.name
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;url(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;String {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.url
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;category(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;Option&amp;lt;String&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.category
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;To make it easy to play around with the code in the next sections, I&#x27;ve created
+a git repository that will contain all of the examples from this blog series
+eventually. No need to go there now if you plan to continue reading; there will
+be a link to the commits for the changes from this article at the end.&lt;&#x2F;p&gt;
+&lt;p&gt;If you just want to read code without explanations though, here is the link you
+need: &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&quot;&gt;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&lt;&#x2F;a&gt;&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;getting-started&quot;&gt;Getting started&lt;&#x2F;h2&gt;
+&lt;p&gt;First off, we need to create the proc-macro crate that is going to contain our
+derive macro. We&#x27;ll name it &lt;code&gt;derive_getters&lt;&#x2F;code&gt; and create it using&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;sh&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-sh &quot;&gt;&lt;code class=&quot;language-sh&quot; data-lang=&quot;sh&quot;&gt;&lt;span&gt;cargo init --lib derive_getters
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Then we add&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;toml&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-toml &quot;&gt;&lt;code class=&quot;language-toml&quot; data-lang=&quot;toml&quot;&gt;&lt;span&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#808080;&quot;&gt;lib&lt;&#x2F;span&gt;&lt;span&gt;]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;proc-macro &lt;&#x2F;span&gt;&lt;span&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;true
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;to its &lt;code&gt;Cargo.toml&lt;&#x2F;code&gt; and add dependencies on &lt;code&gt;proc-macro2&lt;&#x2F;code&gt;, &lt;code&gt;syn&lt;&#x2F;code&gt; and &lt;code&gt;quote&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;You can add dependencies on the command line with &lt;a href=&quot;https:&#x2F;&#x2F;crates.io&#x2F;crates&#x2F;cargo-edit&quot;&gt;cargo-edit&lt;&#x2F;a&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;sh&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-sh &quot;&gt;&lt;code class=&quot;language-sh&quot; data-lang=&quot;sh&quot;&gt;&lt;span&gt;cargo add proc-macro2 syn quote
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;&#x2F;div&gt;
+&lt;p&gt;As mentioned in the first article, derive macros are simply functions with the
+&lt;code&gt;#[proc_macro_derive(Name)]&lt;&#x2F;code&gt; attribute, so we add&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;proc_macro::TokenStream;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;#[proc_macro_derive(Getters)]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;getters(input: TokenStream) -&amp;gt; TokenStream {
+&lt;&#x2F;span&gt;&lt;span&gt;    TokenStream::new()
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;to &lt;code&gt;lib.rs&lt;&#x2F;code&gt;. This derive macro can now already be used! It just doesn&#x27;t do
+anything yet.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;parsing-the-input&quot;&gt;Parsing the input&lt;&#x2F;h2&gt;
+&lt;p&gt;Most procedural macros start with an invocation of &lt;code&gt;syn::parse_macro_input!()&lt;&#x2F;code&gt;.
+We will do the same thing here&lt;sup class=&quot;footnote-reference&quot;&gt;&lt;a href=&quot;#1&quot;&gt;1&lt;&#x2F;a&gt;&lt;&#x2F;sup&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::{parse_macro_input, DeriveInput};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; input = parse_macro_input!(input &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;as&lt;&#x2F;span&gt;&lt;span&gt; DeriveInput);
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This will get us an instance of &lt;code&gt;DeriveInput&lt;&#x2F;code&gt;, or report an error back to the
+compiler if parsing the &lt;code&gt;TokenStream&lt;&#x2F;code&gt; as a &lt;code&gt;DeriveInput&lt;&#x2F;code&gt; fails&lt;sup class=&quot;footnote-reference&quot;&gt;&lt;a href=&quot;#2&quot;&gt;2&lt;&#x2F;a&gt;&lt;&#x2F;sup&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;All further inspection of the input as well as the generation of the output is
+usually done in a sub-module rather than in &lt;code&gt;lib.rs&lt;&#x2F;code&gt;, and uses the types from
+&lt;code&gt;proc_macro2&lt;&#x2F;code&gt; instead of &lt;code&gt;proc_macro&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; lib.rs
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;mod &lt;&#x2F;span&gt;&lt;span&gt;getters;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;getters::expand_getters;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; getters.rs
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;proc_macro2::TokenStream;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::DeriveInput;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;expand_getters(input: DeriveInput) -&amp;gt; TokenStream {
+&lt;&#x2F;span&gt;&lt;span&gt;    TokenStream::new()
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Since this is a different &lt;code&gt;TokenStream&lt;&#x2F;code&gt; type, we need to add an extra conversion
+when using &lt;code&gt;expand_getters&lt;&#x2F;code&gt; from the procedural macro function. Here is the
+updated definition:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span&gt;#[proc_macro_derive(Getters)]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;getters(input: TokenStream) -&amp;gt; TokenStream {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; input = parse_macro_input!(input &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;as&lt;&#x2F;span&gt;&lt;span&gt; DeriveInput);
+&lt;&#x2F;span&gt;&lt;span&gt;    expand_getters(input).into()
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Now before we go to generate output, we need a way of accessing the fields of
+our input struct, if it is a struct with named fields. Of course &lt;code&gt;DeriveInput&lt;&#x2F;code&gt;
+can also contain an enum, unit struct or tuple struct. Figuring out what&#x27;s
+inside is a simple manner of &lt;code&gt;match&lt;&#x2F;code&gt;ing:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::{Data, DataStruct, Fields};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; fields = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match&lt;&#x2F;span&gt;&lt;span&gt; input.data {
+&lt;&#x2F;span&gt;&lt;span&gt;    Data::Struct(DataStruct { fields: Fields::Named(fields), &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;.. &lt;&#x2F;span&gt;&lt;span&gt;}) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt;&lt;&#x2F;span&gt;&lt;span&gt; fields.named,
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_ =&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;panic!(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;this derive macro only works on structs with named fields&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;),
+&lt;&#x2F;span&gt;&lt;span&gt;};
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Here, we &lt;code&gt;panic!()&lt;&#x2F;code&gt; if the input is not what we expect it to be. Very often,
+panicking in procedural macros is not a good idea since it will generate a
+compiler error pointing at the usage of the derive macro, rather than pointing
+at relevant parts of the macro input. However, in this case there isn&#x27;t really
+a more specific error location than the macro itself. If the input is an &lt;code&gt;enum&lt;&#x2F;code&gt;,
+we could point at the &lt;code&gt;enum&lt;&#x2F;code&gt; token itself, but it seems questionable whether
+that would be much better.&lt;&#x2F;p&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;If you want to learn about the other fields of &lt;code&gt;DeriveInput&lt;&#x2F;code&gt; and &lt;code&gt;DataStruct&lt;&#x2F;code&gt;,
+the other variants of &lt;code&gt;Data&lt;&#x2F;code&gt; and &lt;code&gt;Fields&lt;&#x2F;code&gt; and such, you can find all that in
+&lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;syn&#x2F;1.0&quot;&gt;syn&#x27;s documentation&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;h2 id=&quot;generating-some-output&quot;&gt;Generating some output&lt;&#x2F;h2&gt;
+&lt;p&gt;To generate output, we will use the &lt;code&gt;quote&lt;&#x2F;code&gt; crate&#x27;s &lt;code&gt;quote!&lt;&#x2F;code&gt; macro.&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;quote::quote;
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;It is usually invoked with curly braces. Inside, you can write arbitary Rust
+code, which won&#x27;t be compiled as part of the proc-macro itself, but instead is
+returned as a &lt;code&gt;TokenStream&lt;&#x2F;code&gt;. We use it to replace the &lt;code&gt;TokenStream::new()&lt;&#x2F;code&gt; at
+the end of &lt;code&gt;expand_getters&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;diff&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-diff &quot;&gt;&lt;code class=&quot;language-diff&quot; data-lang=&quot;diff&quot;&gt;&lt;span&gt;-TokenStream::new()
+&lt;&#x2F;span&gt;&lt;span&gt;+quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;+    impl NewsFeed {}
+&lt;&#x2F;span&gt;&lt;span&gt;+}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This will work for our first example, but of course we want to use the name of
+whatever struct our derive was used on. This is where some of the extra symbol
+soup from the previous article comes in: interpolation. &lt;code&gt;quote!&lt;&#x2F;code&gt; can interpolate
+the values of local variables into the output. You tell it to do that by
+prefixing an identifier with a hash sign (&lt;code&gt;#&lt;&#x2F;code&gt;):&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; st_name = input.ident;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; It&amp;#39;s a good practice to use this attribute on macro-generated impl blocks.
+&lt;&#x2F;span&gt;&lt;span&gt;    #[automatically_derived]
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;#st_name {}
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;So far so good, but that &lt;code&gt;impl&lt;&#x2F;code&gt; block should actually contain some methods.
+We extracted the named fields of the input into a local variable already, now
+how do we do something useful with it? This fields has the type
+&lt;code&gt;syn::punctuated::Punctuated&amp;lt;syn::Field, syn::token::Comma&amp;gt;&lt;&#x2F;code&gt;, more commonly
+written &lt;code&gt;Punctuated&amp;lt;Field, Token![,]&amp;gt;&lt;&#x2F;code&gt;. Really all we need from that right now
+is an iterator of the actual &lt;code&gt;Field&lt;&#x2F;code&gt;s to be able to generate some code for each
+of them, and of course &lt;code&gt;Punctuated&lt;&#x2F;code&gt; implements &lt;code&gt;IntoIterator&lt;&#x2F;code&gt;, which means we
+can do this:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; getters = fields.into_iter().map(|f| {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Interpolation only works for variables, not arbitrary expressions.
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; That&amp;#39;s why we need to move these fields into local variables first
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; (borrowing would also work though).
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; field_name = f.ident;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; field_ty = f.ty;
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn #&lt;&#x2F;span&gt;&lt;span&gt;field_name(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;#&lt;&#x2F;span&gt;&lt;span&gt;field_ty {
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name
+&lt;&#x2F;span&gt;&lt;span&gt;        }
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;});
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The &lt;code&gt;getters&lt;&#x2F;code&gt; are interpolated into the output in a slightly different way:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span&gt;#[automatically_derived]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;#st_name {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;getters)*
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The reason we have to enclose &lt;code&gt;#getters&lt;&#x2F;code&gt; in &lt;code&gt;#()*&lt;&#x2F;code&gt; is that it&#x27;s not a single
+thing: It&#x27;s an iterator. &lt;code&gt;#()*&lt;&#x2F;code&gt; tells &lt;code&gt;quote!&lt;&#x2F;code&gt; to interpolate the inner tokens
+once per item in all interpolated iterators.&lt;&#x2F;p&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;In this very simple case, we could have called &lt;code&gt;.collect::&amp;lt;TokenStream&amp;gt;()&lt;&#x2F;code&gt; on
+the iterator and interpolated the result without &lt;code&gt;#()*&lt;&#x2F;code&gt;, but repetitions are
+actually more general than that so it&#x27;s good to know them. See &lt;a href=&quot;https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-simple-derive&#x2F;#a-interpolation-repetition&quot;&gt;Appendix A&lt;&#x2F;a&gt; for
+more about interpolations.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;h2 id=&quot;if-something-goes-wrong&quot;&gt;If something goes wrong&lt;&#x2F;h2&gt;
+&lt;p&gt;We now have a working proc-macro! But what if we had made a mistake in our
+generated code? Imagine forgetting the &lt;code&gt;#&lt;&#x2F;code&gt; in &lt;code&gt;&amp;amp;self.#field_name&lt;&#x2F;code&gt; of the
+generated getter methods. Now all getter methods try to access a field named
+literally &lt;code&gt;field_name&lt;&#x2F;code&gt;, which will for most invocations generate errors about
+that field not existing. Since the problem is in generated code, they point at
+the derive macro invocation:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot;&gt;&lt;code&gt;&lt;span&gt;error[E0609]: no field `field_name` on type `&amp;amp;NewsFeed`
+&lt;&#x2F;span&gt;&lt;span&gt; --&amp;gt; getters&#x2F;tests&#x2F;news_feed.rs:3:10
+&lt;&#x2F;span&gt;&lt;span&gt;  |
+&lt;&#x2F;span&gt;&lt;span&gt;3 | #[derive(Getters)]
+&lt;&#x2F;span&gt;&lt;span&gt;  |          ^^^^^^^ unknown field
+&lt;&#x2F;span&gt;&lt;span&gt;  |
+&lt;&#x2F;span&gt;&lt;span&gt;  = note: available fields are: `name`, `url`, `category`
+&lt;&#x2F;span&gt;&lt;span&gt;  = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;That&#x27;s not very helpful. And while we might be able to figure things out in this
+case, imagine your macro code being 500 lines of code or more. Clearly, we need
+a way of seeing the generated code. This is where &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;dtolnay&#x2F;cargo-expand#readme&quot;&gt;cargo-expand&lt;&#x2F;a&gt; comes in. You
+invoke it like any cargo command that runs the compiler (e.g. &lt;code&gt;check&lt;&#x2F;code&gt; or
+&lt;code&gt;build&lt;&#x2F;code&gt;), and you can additionally specify a module path to filter out of the
+output, similar to the last argument of &lt;code&gt;cargo test&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;cargo expand foo::bar&lt;&#x2F;code&gt; – show the generated code for the module &lt;code&gt;foo::bar&lt;&#x2F;code&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;cargo expand --test news_feed&lt;&#x2F;code&gt; – show the generated code for the &lt;code&gt;news_feed&lt;&#x2F;code&gt;
+test&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;In the case of the forgotten &lt;code&gt;#&lt;&#x2F;code&gt;, expanding the news feed test case from the
+beginning will make the problem very clear (comments are mine, of course):&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Some things you will always see in the output of `cargo expand`.
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Usually you can just remove these if you want to compile the expanded output
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; separately to find an issue in a large body of generated code.
+&lt;&#x2F;span&gt;&lt;span&gt;#![feature(prelude_import)]
+&lt;&#x2F;span&gt;&lt;span&gt;#[prelude_import]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;std::prelude::v1::*;
+&lt;&#x2F;span&gt;&lt;span&gt;#[macro_use]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;extern crate&lt;&#x2F;span&gt;&lt;span&gt; std;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; What you wrote, with macros expanded:
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;getters::Getters;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Omitted: Definition of NewsFeed
+&lt;&#x2F;span&gt;&lt;span&gt;#[automatically_derived]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;NewsFeed {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span&gt;name(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;String {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.field_name
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Omitted: Other getters
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Omitted: Generated main function (because this is a test module)
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;h2 id=&quot;working-with-generic-types&quot;&gt;Working with generic types&lt;&#x2F;h2&gt;
+&lt;p&gt;Our initial example produces the expected output, now we&#x27;re done, right?
+Unfortunately, unless we just forbid generic structs as inputs, we aren&#x27;t.
+Let&#x27;s consider what our current logic will generate for:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span&gt;#[derive(Getters)]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span&gt;NewsFeedRef&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;#39;a&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;    name: &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&amp;#39;a str&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;    url: &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&amp;#39;a str&lt;&#x2F;span&gt;&lt;span&gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;    category: Option&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&amp;#39;a str&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt;,
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;It will generate &lt;code&gt;impl NewsFeedRef { ... }&lt;&#x2F;code&gt;! That won&#x27;t work, since we&#x27;re not
+allowed to elide the lifetime in impl blocks, and even if we were could, our
+generated methods would mention the lifetime &lt;code&gt;&#x27;a&lt;&#x2F;code&gt; in their return types. Clearly
+we need to introduce the type&#x27;s generic parameters for the generated &lt;code&gt;impl&lt;&#x2F;code&gt;
+block too.&lt;&#x2F;p&gt;
+&lt;p&gt;You may assume that handling generics correctly will be a lot of work, and it
+can certainly be for some macros. However, for basic ones like ours we can just
+let &lt;code&gt;syn&lt;&#x2F;code&gt; do all of the heavy lifting:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let &lt;&#x2F;span&gt;&lt;span&gt;(impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;    #[automatically_derived]
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span&gt;#impl_generics #st_name #ty_generics #where_clause {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;getters)
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;And that&#x27;s it! Our derive now works on generic types, including ones with type
+or const generics and complex where clauses. There&#x27;s one thing this example
+makes even clearer than the previous ones though: Simply prepending a &lt;code&gt;&amp;amp;&lt;&#x2F;code&gt; to a
+field&#x27;s type is not a very good solution to finding an appropriate get method
+return type. See &lt;a href=&quot;https:&#x2F;&#x2F;blog.turbo.fish&#x2F;proc-macro-simple-derive&#x2F;#b-improving-the-accessors-return-types&quot;&gt;Appendix B&lt;&#x2F;a&gt; for a look at how we could improve the accessors&#x27;
+return types.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;conclusion&quot;&gt;Conclusion&lt;&#x2F;h2&gt;
+&lt;p&gt;At this point, you should have an understanding of how to create a simple
+derive macro! You can look at the macro crate built in this article in its
+entirety &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&#x2F;tree&#x2F;simple-derive-v1&#x2F;derive_getters&quot;&gt;here&lt;&#x2F;a&gt;, or review the changes from each section
+separately by going through the &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&#x2F;compare&#x2F;init...simple-derive-v1&quot;&gt;corresponding commits&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;There are still many things that I haven&#x27;t covered of course. The most important
+one in my opinion is error handling, specifically reporting errors as
+originating from part of the input; that&#x27;s what the &lt;a href=&quot;&#x2F;proc-macro-error-handling&#x2F;&quot;&gt;next article&lt;&#x2F;a&gt; is about.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;appendix&quot;&gt;Appendix&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;a-interpolation-repetition&quot;&gt;A. Interpolation repetition&lt;&#x2F;h3&gt;
+&lt;p&gt;As mentioned above, interpolation repetition is a lot more powerful than simply
+expanding an iterator. Here is an example:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span&gt;quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span&gt;#name {
+&lt;&#x2F;span&gt;&lt;span&gt;        #(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub&lt;&#x2F;span&gt;&lt;span&gt; #fields: #tys),*
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;code&gt;fields&lt;&#x2F;code&gt; and &lt;code&gt;tys&lt;&#x2F;code&gt; are both iterators or lists here and will be iterated in
+lockstep to produce a list of struct fields, separated with commas (that is,
+there won&#x27;t be a comma after the last field generated by the interpolation,
+which would be there if the comma was inside the parentheses).&lt;&#x2F;p&gt;
+&lt;p&gt;There is also a short section on interpolation
+&lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;quote&#x2F;1.0&#x2F;quote&#x2F;macro.quote.html#interpolation&quot;&gt;in &lt;code&gt;quote!&lt;&#x2F;code&gt;s documentation&lt;&#x2F;a&gt; if you want to learn more about
+interpolation, for example the supported types.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;b-improving-the-accessors-return-types&quot;&gt;B. Improving the accessors&#x27; return types&lt;&#x2F;h3&gt;
+&lt;p&gt;Since what the macro does so far is still very basic, I wanted to show a small
+thing that makes it somewhat more sophisticated: Customizing the output types
+for the generated methods.&lt;&#x2F;p&gt;
+&lt;p&gt;The first very simple &quot;specialization&quot; that I touched on with the
+&lt;code&gt;NewsFeedRef&lt;&#x2F;code&gt; example is references. These can be checked for easily:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::{Type, TypeReference};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; getters = fields.into_iter().map(|f| {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; field_name = f.ident;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; return_ty = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match&lt;&#x2F;span&gt;&lt;span&gt; f.ty {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; shared references can simply by copied
+&lt;&#x2F;span&gt;&lt;span&gt;        Type::Reference(r &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;@&lt;&#x2F;span&gt;&lt;span&gt; TypeReference { mutability: None, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;.. &lt;&#x2F;span&gt;&lt;span&gt;}) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;r },
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; fallback to adding a reference
+&lt;&#x2F;span&gt;&lt;span&gt;        ty &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;#&lt;&#x2F;span&gt;&lt;span&gt;ty },
+&lt;&#x2F;span&gt;&lt;span&gt;    };
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn #&lt;&#x2F;span&gt;&lt;span&gt;field_name(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;return_ty {
+&lt;&#x2F;span&gt;&lt;span&gt;            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name
+&lt;&#x2F;span&gt;&lt;span&gt;        }
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;});
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;And due to auto-deref, we don&#x27;t even need to adjust the function body. This is
+more luck than anything else though, and we&#x27;ll need to adjust the function body
+too if we want to add more specializations, for example for &lt;code&gt;Option&amp;lt;_&amp;gt;&lt;&#x2F;code&gt; and
+&lt;code&gt;String&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::{Path, TypePath};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let &lt;&#x2F;span&gt;&lt;span&gt;(return_ty, body) = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match&lt;&#x2F;span&gt;&lt;span&gt; f.ty {
+&lt;&#x2F;span&gt;&lt;span&gt;    Type::Reference(r &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;@&lt;&#x2F;span&gt;&lt;span&gt; TypeReference { mutability: None, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;.. &lt;&#x2F;span&gt;&lt;span&gt;}) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;        (quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;r }, quote! { self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name })
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;    Type::Path(TypePath { path, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;.. &lt;&#x2F;span&gt;&lt;span&gt;}) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; path.is_ident(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;String&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;        (quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;::core::primitive::str }, quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name })
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;    Type::Path(ty &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;@&lt;&#x2F;span&gt;&lt;span&gt; TypePath { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;.. &lt;&#x2F;span&gt;&lt;span&gt;}) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; match &lt;&#x2F;span&gt;&lt;span&gt;option_inner_type(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;ty.path) {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Option&amp;lt;String&amp;gt; =&amp;gt; Option&amp;lt;&amp;amp;str&amp;gt; (.as_deref())
+&lt;&#x2F;span&gt;&lt;span&gt;        Some(Type::Path(TypePath { path, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;.. &lt;&#x2F;span&gt;&lt;span&gt;})) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; path.is_ident(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;String&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;(
+&lt;&#x2F;span&gt;&lt;span&gt;            quote! { ::std::option::Option&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;::core::primitive::&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;str&lt;&#x2F;span&gt;&lt;span&gt;&amp;gt; },
+&lt;&#x2F;span&gt;&lt;span&gt;            quote! { self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name.as_deref() },
+&lt;&#x2F;span&gt;&lt;span&gt;        ),
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; Option&amp;lt;T&amp;gt; =&amp;gt; Option&amp;lt;&amp;amp;T&amp;gt; (.as_ref())
+&lt;&#x2F;span&gt;&lt;span&gt;        Some(inner_ty) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;(
+&lt;&#x2F;span&gt;&lt;span&gt;            quote! { ::std::option::Option&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#ff3333;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;inner_ty&amp;gt; },
+&lt;&#x2F;span&gt;&lt;span&gt;            quote! { self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name.as_ref() },
+&lt;&#x2F;span&gt;&lt;span&gt;        ),
+&lt;&#x2F;span&gt;&lt;span&gt;        None &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;(quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;#&lt;&#x2F;span&gt;&lt;span&gt;ty }, quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name }),
+&lt;&#x2F;span&gt;&lt;span&gt;    },
+&lt;&#x2F;span&gt;&lt;span&gt;    ty &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;(quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;#&lt;&#x2F;span&gt;&lt;span&gt;ty }, quote! { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;field_name }),
+&lt;&#x2F;span&gt;&lt;span&gt;};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;quote! {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn #&lt;&#x2F;span&gt;&lt;span&gt;field_name(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;self) -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;return_ty {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;#&lt;&#x2F;span&gt;&lt;span&gt;body
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;with the helper function &lt;code&gt;option_inner_type&lt;&#x2F;code&gt; being defined as&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;syn::{GenericArgument, PathArguments};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;option_inner_type(path: &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;Path) -&amp;gt; Option&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;Type&amp;gt; {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; path.leading_colon.is_some() {
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span&gt;None;
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; path.segments.len() != &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;||&lt;&#x2F;span&gt;&lt;span&gt; path.segments[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span&gt;].ident != &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;Option&amp;quot; &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span&gt;None;
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; ab = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match &amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;path.segments[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span&gt;].arguments {
+&lt;&#x2F;span&gt;&lt;span&gt;        PathArguments::AngleBracketed(ab) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt;&lt;&#x2F;span&gt;&lt;span&gt; ab,
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_ =&amp;gt; return &lt;&#x2F;span&gt;&lt;span&gt;None,
+&lt;&#x2F;span&gt;&lt;span&gt;    };
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; ab.args.len() != &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1 &lt;&#x2F;span&gt;&lt;span&gt;{
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span&gt;None;
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;match &amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;ab.args[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span&gt;] {
+&lt;&#x2F;span&gt;&lt;span&gt;        GenericArgument::Type(t) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;Some(t),
+&lt;&#x2F;span&gt;&lt;span&gt;        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;_ =&amp;gt; &lt;&#x2F;span&gt;&lt;span&gt;None,
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;As you can see, things can get more complex quickly even though we barely
+special-cased any types, and maybe you also noticed that we&#x27;re currently only
+applying the special cases to &lt;code&gt;String&lt;&#x2F;code&gt;s and &lt;code&gt;Option&lt;&#x2F;code&gt;s that are referred to as
+exactly that (i.e., qualifying &lt;code&gt;Option&lt;&#x2F;code&gt; as &lt;code&gt;std::option::Option&lt;&#x2F;code&gt; will bypass the
+special case).&lt;&#x2F;p&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;Note that, as mentioned &lt;a href=&quot;&#x2F;proc-macro-basics&#x2F;#a-note-on-macro-expansion&quot;&gt;last time&lt;&#x2F;a&gt;, it is impossible to apply these kinds of
+special cases correctly under all circumstances. Users could always shadow
+&lt;code&gt;std&lt;&#x2F;code&gt;s &lt;code&gt;Option&lt;&#x2F;code&gt; or &lt;code&gt;String&lt;&#x2F;code&gt; types, or even builtin types like &lt;code&gt;u8&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;When you want to explicitly use one of the &lt;code&gt;std&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;core&lt;&#x2F;code&gt; types, you can do so
+with absolute paths, but knowing what type names from the input resolve to is
+simply impossible.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;p&gt;I hope this extended example was a good showcase for what to expect from reading
+or writing real-world proc-macro code. In the end it&#x27;s still all regular Rust
+code that inspects a few data structures with the only &quot;magic&quot; being inside
+&lt;code&gt;quote!&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;The full code after these changes can be found &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;jplatte&#x2F;proc-macro-blog-examples&#x2F;tree&#x2F;simple-derive-ext-v1&#x2F;derive_getters&quot;&gt;here&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;div class=&quot;footnote-definition&quot; id=&quot;1&quot;&gt;&lt;sup class=&quot;footnote-definition-label&quot;&gt;1&lt;&#x2F;sup&gt;
+&lt;p&gt;Instead of &lt;code&gt;let input = parse_macro_input!(input as DeriveInput);&lt;&#x2F;code&gt;, we could also have written &lt;code&gt;let input: DeriveInput = parse_macro_input!(input);&lt;&#x2F;code&gt;. This still seems less common, so I went with the former.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;div class=&quot;footnote-definition&quot; id=&quot;2&quot;&gt;&lt;sup class=&quot;footnote-definition-label&quot;&gt;2&lt;&#x2F;sup&gt;
+&lt;p&gt;A derive macro&#x27;s input failing to parse as &lt;code&gt;syn::DeriveInput&lt;&#x2F;code&gt; is highly unlikely, but possible: Either simply because of a bug in syn, or because the version of syn that&#x27;s being used is too old to be aware of newer syntax features.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+</description>
+      </item>
+      <item>
+          <title>Procedural Macros: The Basics</title>
+          <pubDate>Tue, 16 Feb 2021 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://blog.turbo.fish/proc-macro-basics/</link>
+          <guid>https://blog.turbo.fish/proc-macro-basics/</guid>
+          <description xml:base="https://blog.turbo.fish/proc-macro-basics/">&lt;p&gt;Procedural macros (often shortened to &quot;proc-macros&quot;) are a unique Rust feature
+that allow creating custom derives, attributes and function-like macros in
+regular Rust code that is run at compile time. And although they are the only
+way of writing custom attributes and derives, vastly more powerful and even
+easier to read than (large) declarative macros, there is very little learning
+material out there for proc-macros.&lt;&#x2F;p&gt;
+&lt;p&gt;That&#x27;s why I&#x27;m here, writing my own blog series on the matter. Currently, I plan
+to write 5 more posts after this one, starting with a very basic derive example
+that should appear within a week or two, continuing with a discussion on
+proc-macro error handling and then moving to topics only applicable to smaller
+subsets of proc-macros.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;anatomy-of-a-procedural-macro&quot;&gt;Anatomy of a procedural macro&lt;&#x2F;h2&gt;
+&lt;p&gt;Procedural macros are functions with a &lt;code&gt;#[proc_macro]&lt;&#x2F;code&gt;,
+&lt;code&gt;#[proc_macro_derive(Name)]&lt;&#x2F;code&gt; or &lt;code&gt;#[proc_macro_attribute]&lt;&#x2F;code&gt; attribute. They have
+one (function-like and derive macros) or two (attribute macros)
+&lt;code&gt;proc_macro::TokenStream&lt;&#x2F;code&gt; arguments and also return a &lt;code&gt;proc_macro::TokenStream&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;You can sort of think of procedural macros as functions from an AST to another
+AST.&lt;&#x2F;p&gt;
+&lt;p&gt;— &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;reference&#x2F;procedural-macros.html&quot;&gt;The Rust Reference&lt;&#x2F;a&gt;&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;They must be public (&lt;code&gt;pub fn ...&lt;&#x2F;code&gt;) and live in a crate of the type &lt;code&gt;proc-macro&lt;&#x2F;code&gt;.
+When using Cargo (and who doesn&#x27;t?) this crate type is declared
+in the &lt;code&gt;lib&lt;&#x2F;code&gt; section of &lt;code&gt;Cargo.toml&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;toml&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-toml &quot;&gt;&lt;code class=&quot;language-toml&quot; data-lang=&quot;toml&quot;&gt;&lt;span&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#808080;&quot;&gt;lib&lt;&#x2F;span&gt;&lt;span&gt;]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;proc-macro &lt;&#x2F;span&gt;&lt;span&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;true
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;A proc-macro crate can &lt;em&gt;only&lt;&#x2F;em&gt; export proc-macros, no regular functions, types,
+modules or &lt;code&gt;macro_rules!&lt;&#x2F;code&gt; macros. It can of course define other items, but it
+cannot export them for use in other crates.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;the-crates-involved&quot;&gt;The crates involved&lt;&#x2F;h2&gt;
+&lt;p&gt;Every proc-macro crate can access the builtin &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;proc_macro&#x2F;&quot;&gt;&lt;code&gt;proc_macro&lt;&#x2F;code&gt; crate&lt;&#x2F;a&gt;.
+There is not much to say about it; the only type from it that a typical
+proc-macro interacts with is &lt;code&gt;proc_macro::TokenStream&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;All of the following articles are going to be about proc-macros that parse their
+input with &lt;code&gt;syn&lt;&#x2F;code&gt; and generate their output with &lt;code&gt;quote&lt;&#x2F;code&gt;. These are not mandatory
+for proc-macros, but they are used by the vast majority of them.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;syn&#x2F;1.0&quot;&gt;syn&lt;&#x2F;a&gt; focuses on parsing Rust code into its own &lt;a href=&quot;https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Abstract_syntax_tree&quot;&gt;AST&lt;&#x2F;a&gt;, but also has (optional)
+support for parsing custom syntax, which can be very useful when parsing
+attributes, function-like macro input or custom syntax embedded into Rust syntax
+(most commonly when writing attribute macros).&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;quote&#x2F;1.0&quot;&gt;quote&lt;&#x2F;a&gt; has a tiny API surface of which one item sees the vast majority of
+&lt;code&gt;use&lt;&#x2F;code&gt;s: &lt;code&gt;quote!&lt;&#x2F;code&gt;. &lt;code&gt;quote!&lt;&#x2F;code&gt; is a function-like macro that turns its input into a
+&lt;code&gt;proc_macro2::TokenStream&lt;&#x2F;code&gt; while substituting placeholders. If you have read or
+written a &lt;code&gt;macro_rules!&lt;&#x2F;code&gt; macro before, I&#x27;ll already let you know this:
+&lt;code&gt;quote! { #(#key: #value),* }&lt;&#x2F;code&gt; is the proc-macro equivalent to
+&lt;code&gt;$($key: $value),*)&lt;&#x2F;code&gt;. If you haven&#x27;t, don&#x27;t mind the symbol soup above: We&#x27;ll
+get to that in the next article.&lt;&#x2F;p&gt;
+&lt;div class=&quot;info&quot;&gt;
+&lt;p&gt;You might be wondering about the &lt;code&gt;2&lt;&#x2F;code&gt; in &lt;code&gt;proc_macro2&lt;&#x2F;code&gt; above. It&#x27;s not a typo,
+syn and quote actually hardly interact with the types from the builtin
+&lt;code&gt;proc_macro&lt;&#x2F;code&gt; crate directly, instead using the wrapper crate &lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;proc-macro2&#x2F;1.0&quot;&gt;proc-macro2&lt;&#x2F;a&gt;. This
+crate only exist because the builtin crate is limited to procedural macro
+compilation contexts. For more details, see the linked documentation.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;h2 id=&quot;derive-macros-vs-attribute-macros&quot;&gt;Derive macros vs. attribute macros&lt;&#x2F;h2&gt;
+&lt;p&gt;One important difference between derive macros and attribute macros that I only
+learned about rather late myself is that derive macros generate code that is
+then &lt;em&gt;added&lt;&#x2F;em&gt; to the same module, while attribute macros generate code that
+&lt;em&gt;replaces&lt;&#x2F;em&gt; the item they were applied on.&lt;&#x2F;p&gt;
+&lt;p&gt;This makes a lot of sense when you consider the use cases for each: derive
+macros are only really meant to add &lt;code&gt;impl&lt;&#x2F;code&gt; blocks and nothing else. For
+attribute macros this is much less clear, for example one might want to create
+an attribute macro that introduces a new control-flow operator. Clearly the
+code can only compile successfully if that kind of thing is stripped as part of
+macro expansion, which also brings me to:&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;a-note-on-macro-expansion&quot;&gt;A note on macro expansion&lt;&#x2F;h2&gt;
+&lt;p&gt;I have seen people from time to time being surprised or sometimes confused about
+what macros, proc-macros in particular, are capable of but also what they&#x27;re
+&lt;em&gt;not&lt;&#x2F;em&gt; capable of.&lt;&#x2F;p&gt;
+&lt;p&gt;I think this is most often a cause of not knowing or not considering how macros
+interact with the compiler, i.e. how the compiler expands them: Macros have
+input and output tokens, but can&#x27;t &quot;talk to the compiler&quot; beyond that simple
+interface. This means they can&#x27;t do things like inspecting the outer scope of
+source code in which they were invoked, or figure out where names referenced in
+their input are coming from.&lt;&#x2F;p&gt;
+&lt;p&gt;One real-world case where I&#x27;ve seen this be a problem (or maybe more of an
+annoyance) is &lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;thiserror&#x2F;1.0&quot;&gt;thiserror&lt;&#x2F;a&gt;. It derives &lt;code&gt;std&lt;&#x2F;code&gt;s &lt;code&gt;Error&lt;&#x2F;code&gt; trait for the user,
+including the unstable¹ &lt;code&gt;backtrace()&lt;&#x2F;code&gt; method if there is a field with a type
+named &lt;code&gt;Backtrace&lt;&#x2F;code&gt;. If you want to capture backtraces on stable using the
+&lt;a href=&quot;https:&#x2F;&#x2F;docs.rs&#x2F;backtrace&#x2F;0.3&quot;&gt;backtrace&lt;&#x2F;a&gt; crate and also use the &lt;code&gt;thiserror::Error&lt;&#x2F;code&gt; derive macro for your
+error type, you have to rename the &lt;code&gt;Backtrace&lt;&#x2F;code&gt; type at the import site, or you
+get stability errors because thiserror tries to implement an unstable method for
+you.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;next-up&quot;&gt;Next up&lt;&#x2F;h2&gt;
+&lt;p&gt;The next article is going to explain how to implement a basic derive macro.
+You can find it at the &#x27;Next post&#x27; link below.&lt;&#x2F;p&gt;
+&lt;p&gt;[^1] at the time of writing&lt;&#x2F;p&gt;
+</description>
+      </item>
+      <item>
+          <title>Advanced Cargo [features] Usage</title>
+          <pubDate>Fri, 30 Oct 2020 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://blog.turbo.fish/cargo-features/</link>
+          <guid>https://blog.turbo.fish/cargo-features/</guid>
+          <description xml:base="https://blog.turbo.fish/cargo-features/">&lt;p&gt;Last year, &lt;a href=&quot;https:&#x2F;&#x2F;blog.turbo.fish&#x2F;rust-2020&#x2F;&quot;&gt;in my Rust 2020 blog post&lt;&#x2F;a&gt;, I asked for Cargo crate
+features to receive some attention. Fortunately, it seems like I was not the
+only one and the big feature resolver rewrite that was required to fix a number
+of issues has happened. Unfortunately, the new feature resolve is still
+Nightly-only, and it still doesn&#x27;t fix all of my gripes with Cargo &lt;code&gt;[features]&lt;&#x2F;code&gt;.
+Recently, I discovered some tricks to work around some of these gripes, so I
+thought I should share them here!&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;reusing-the-name-of-an-optional-dependency-for-a-feature&quot;&gt;Reusing the name of an optional dependency for a feature&lt;&#x2F;h2&gt;
+&lt;p&gt;Sometimes, you have an optional dependency, and would like to activate a feature
+or another dependency automatically if that dependency is activated – exactly
+like if it was a crate feature. However, you can&#x27;t just create a feature of the
+same name because that would cause a conflict (dependencies and features share
+the same namespace&lt;sup class=&quot;footnote-reference&quot;&gt;&lt;a href=&quot;#1&quot;&gt;1&lt;&#x2F;a&gt;&lt;&#x2F;sup&gt;). Adding a feature of a different name and requiring your
+users to activate that would be a breaking change, for something that should
+really be straight-forward. What to do?&lt;&#x2F;p&gt;
+&lt;p&gt;To answer that, let me first back up a bit:&lt;&#x2F;p&gt;
+&lt;p&gt;Since &lt;a href=&quot;https:&#x2F;&#x2F;blog.rust-lang.org&#x2F;2018&#x2F;12&#x2F;06&#x2F;Rust-1.31-and-rust-2018.html#cargo-features&quot;&gt;Cargo 1.31&lt;&#x2F;a&gt;, you can rename dependencies in &lt;code&gt;Cargo.toml&lt;&#x2F;code&gt;. Usually, you
+would do this to import multiple versions of the same crate, or, most often, to
+just use the crate under a different (shorter) name. However, it also means that
+referring to it in feature dependencies…&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;toml&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-toml &quot;&gt;&lt;code class=&quot;language-toml&quot; data-lang=&quot;toml&quot;&gt;&lt;span&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#808080;&quot;&gt;features&lt;&#x2F;span&gt;&lt;span&gt;]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;my_feature &lt;&#x2F;span&gt;&lt;span&gt;= [&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;&amp;lt;here&amp;gt;&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;]
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;is done using the name you chose, rather than the original name. This means you
+can reuse the original crate name as the name of a feature! However, it also
+means that you now have to refer to the dependency using a different name in
+your code. Unless…&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;without-actually-renaming-it&quot;&gt;… without actually renaming it&lt;&#x2F;h3&gt;
+&lt;p&gt;You just rename it back in your crate root! Before renaming was possible in
+&lt;code&gt;Cargo.toml&lt;&#x2F;code&gt;, you would do it through &lt;code&gt;extern crate foo as bar;&lt;&#x2F;code&gt;. Turns out you
+can do this to just undo a renaming from &lt;code&gt;Cargo.toml&lt;&#x2F;code&gt;. In Rust 2018 crates, this
+will result in both names referring to the same crate, but that should not be an
+issue in practice.&lt;&#x2F;p&gt;
+&lt;p&gt;To put all this together into a made-up example, let&#x27;s say you have a crate
+&lt;code&gt;big_crate&lt;&#x2F;code&gt; that defines a bunch of types, and has an optional dependency on
+&lt;code&gt;serde&lt;&#x2F;code&gt; to make them (de)serializable for users who need that:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;toml&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-toml &quot;&gt;&lt;code class=&quot;language-toml&quot; data-lang=&quot;toml&quot;&gt;&lt;span&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#808080;&quot;&gt;dependencies&lt;&#x2F;span&gt;&lt;span&gt;]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;serde &lt;&#x2F;span&gt;&lt;span&gt;= { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;version &lt;&#x2F;span&gt;&lt;span&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;1.0.117&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;features &lt;&#x2F;span&gt;&lt;span&gt;= [&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;derive&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;], &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;optional &lt;&#x2F;span&gt;&lt;span&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;true &lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;# other dependencies
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Now your crate is rather large, and some of your users are only interested in
+a rather small subset of your crate. You decide that it makes sense to have this
+subset in an independent crate &lt;code&gt;small_crate&lt;&#x2F;code&gt;, and refactor things accordingly,
+re-exporting the new crate&#x27;s contents such that the API of &lt;code&gt;big_crate&lt;&#x2F;code&gt; stays the
+same. However, some of the types with optional (de)serialization have moved too!
+You need to make sure that they continue to implement &lt;code&gt;Deserialize&lt;&#x2F;code&gt; and
+&lt;code&gt;Serialize&lt;&#x2F;code&gt; if &lt;code&gt;big_crate&lt;&#x2F;code&gt;s &lt;code&gt;serde&lt;&#x2F;code&gt; dependency is enabled. To do that, first
+rename &lt;code&gt;serde&lt;&#x2F;code&gt; in &lt;code&gt;Cargo.toml&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;toml&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-toml &quot;&gt;&lt;code class=&quot;language-toml&quot; data-lang=&quot;toml&quot;&gt;&lt;span&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#808080;&quot;&gt;dependencies&lt;&#x2F;span&gt;&lt;span&gt;]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;serde_cr &lt;&#x2F;span&gt;&lt;span&gt;= { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;package &lt;&#x2F;span&gt;&lt;span&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;serde&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;version &lt;&#x2F;span&gt;&lt;span&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;1.0.117&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;features &lt;&#x2F;span&gt;&lt;span&gt;= [&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;derive&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;], &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;optional &lt;&#x2F;span&gt;&lt;span&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;true &lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;small_crate &lt;&#x2F;span&gt;&lt;span&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;0.1.0&amp;quot; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;# Added during the refactoring
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;# other dependencies
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Then add a &lt;code&gt;serde&lt;&#x2F;code&gt; feature:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;toml&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-toml &quot;&gt;&lt;code class=&quot;language-toml&quot; data-lang=&quot;toml&quot;&gt;&lt;span&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#808080;&quot;&gt;features&lt;&#x2F;span&gt;&lt;span&gt;]
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;serde &lt;&#x2F;span&gt;&lt;span&gt;= [
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;serde_cr&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;# Enable the serde dependency...
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;small_crate&#x2F;serde&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;# ... and small_crate&amp;#39;s serde feature
+&lt;&#x2F;span&gt;&lt;span&gt;]
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;and finally, undo the renaming from &lt;code&gt;Cargo.toml&lt;&#x2F;code&gt; in &lt;code&gt;big_crate&lt;&#x2F;code&gt;s &lt;code&gt;lib.rs&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;extern crate&lt;&#x2F;span&gt;&lt;span&gt; serde_cr &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;as&lt;&#x2F;span&gt;&lt;span&gt; serde;
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;That&#x27;s it. Onto the next trick!&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;activating-a-dependency-if-a-combination-of-features-is-active&quot;&gt;Activating a dependency if a combination of features is active&lt;&#x2F;h2&gt;
+&lt;small&gt;
+    or activating a feature if a combination of other features is active
+&lt;&#x2F;small&gt;
+&lt;p&gt;… is unfortunately not possible in the general case. However, there is a
+workaround that works well enough for a subset of use cases: Adding a combined
+feature. That is, if you have an &lt;code&gt;f_foo&lt;&#x2F;code&gt; feature for the &lt;code&gt;c_foo&lt;&#x2F;code&gt; crate and an
+&lt;code&gt;f_bar&lt;&#x2F;code&gt; feature for the &lt;code&gt;c_bar&lt;&#x2F;code&gt; crate, and also need to activate the &lt;code&gt;c_foo_bar&lt;&#x2F;code&gt;
+crate if both &lt;code&gt;f_foo&lt;&#x2F;code&gt; and &lt;code&gt;f_bar&lt;&#x2F;code&gt; are active, just require your users to use a
+new feature, &lt;code&gt;f_foo_bar&lt;&#x2F;code&gt;, which automatically activates &lt;code&gt;f_foo&lt;&#x2F;code&gt; and &lt;code&gt;f_bar&lt;&#x2F;code&gt;, but
+also the &lt;code&gt;c_foo_bar&lt;&#x2F;code&gt; dependency.&lt;&#x2F;p&gt;
+&lt;p&gt;The reason this doesn&#x27;t work in the general case is that other library crates
+(not just applications) might want to use features your crate provides. If one
+&lt;code&gt;rdep_1&lt;&#x2F;code&gt; activates &lt;code&gt;f_foo&lt;&#x2F;code&gt; and &lt;code&gt;rdep_2&lt;&#x2F;code&gt; activates &lt;code&gt;f_bar&lt;&#x2F;code&gt;, another crate
+depending on both &lt;code&gt;rdep_1&lt;&#x2F;code&gt; and &lt;code&gt;rdep_2&lt;&#x2F;code&gt; would have to know how these work
+internally and depend on your crate explicitly without actually using it, just
+to activate &lt;code&gt;f_foo_bar&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;As a practical example, you can have a look at &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;launchbadge&#x2F;sqlx&#x2F;pull&#x2F;735&quot;&gt;my PR adding rustls as an
+alternative TLS backend in SQLx&lt;&#x2F;a&gt;. There, I added &lt;em&gt;six&lt;&#x2F;em&gt; of these
+combined features for every possible combination of runtime (&lt;code&gt;async-std&lt;&#x2F;code&gt; &#x2F;
+&lt;code&gt;tokio&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;actix&lt;&#x2F;code&gt;) and TLS backend (&lt;code&gt;native-tls&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;rustls&lt;&#x2F;code&gt;). Some of the
+combined features activate crates that are only relevant for that combination
+of runtime and TLS backend, for example &lt;code&gt;tokio&lt;&#x2F;code&gt; + &lt;code&gt;native-tls&lt;&#x2F;code&gt; ⇒
+&lt;code&gt;tokio-native-tls&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;This trick works very well for runtimes and TLS backends in SQLx because there
+is no reason for it to expose them independently. Other crates can either select
+both a runtime and TLS backend at the same time, or have their own runtime + TLS
+backend features that activate the corresponding ones in SQLx.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;good-error-messages-for-mutually-exclusive-feature-misuse&quot;&gt;Good error messages for mutually exclusive feature misuse&lt;&#x2F;h2&gt;
+&lt;p&gt;Mutually exclusive features are not natively supported in Cargo. Of course it is
+easy to make something not compile with a certain feature set, but more often
+than not, you want to provide a useful error message if a conflicting feature
+set is requested. This is usually solved through a conditional &lt;code&gt;compile_error!&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span&gt;#[cfg(all(feature &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;feat1&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;, feature &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;feat2&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;))]
+&lt;&#x2F;span&gt;&lt;span&gt;compile_error!(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;`feat1` and `feat2` may not be used at the same time&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;);
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;However, if your crate would already not compile with these two features
+activated at the same time, for example due to duplicate definitions of the
+same item, this new error message is not going to replace those&lt;sup class=&quot;footnote-reference&quot;&gt;&lt;a href=&quot;#2&quot;&gt;2&lt;&#x2F;a&gt;&lt;&#x2F;sup&gt; but rather
+just appear alongside them. That&#x27;s not very user friendly!&lt;&#x2F;p&gt;
+&lt;p&gt;To fix this, you can carefully set up your &lt;code&gt;#[cfg]&lt;&#x2F;code&gt;s such that all of the other
+errors go away for all invalid feature sets a user could provide, for example
+by using &lt;code&gt;#[cfg(all(feature = &quot;feat1&quot;, not(feature = &quot;feat2&quot;)))]&lt;&#x2F;code&gt; rather than
+just &lt;code&gt;#[cfg(feature = &quot;feat1&quot;)]&lt;&#x2F;code&gt; on the first definition of an item that has
+different definitions for the two features. Of course, this quickly becomes a
+burden if there is a non-trivial amount of feature-gated code, so I am here to
+offer an alternative: Move the feature set check into a &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;cargo&#x2F;reference&#x2F;build-scripts.html&quot;&gt;build script&lt;&#x2F;a&gt;:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#1e1e1e;color:#dcdcdc;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span&gt;std::{env, process};
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span&gt;main() {
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; feat1_active = env::var_os(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;CARGO_FEATURE_FEAT1&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;).is_some();
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; feat2_active = env::var_os(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;CARGO_FEATURE_FEAT2&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;).is_some();
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2F;span&gt;&lt;span&gt; feat1_active &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt; feat2_active {
+&lt;&#x2F;span&gt;&lt;span&gt;        eprintln!(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;error: The f1 and f2 features can&amp;#39;t be activated at the same time.&amp;quot;&lt;&#x2F;span&gt;&lt;span&gt;);
+&lt;&#x2F;span&gt;&lt;span&gt;        process::exit(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span&gt;);
+&lt;&#x2F;span&gt;&lt;span&gt;    }
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;em&gt;Note: An earlier version of this post advocated using &lt;code&gt;compile_error!&lt;&#x2F;code&gt;, but in
+a separate crate that the main crate forwards all its features to. That also
+works, but is more work and as far as I know has no advantages over the build
+script approach that I came up with shortly after.&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
+&lt;div class=&quot;footnote-definition&quot; id=&quot;1&quot;&gt;&lt;sup class=&quot;footnote-definition-label&quot;&gt;1&lt;&#x2F;sup&gt;
+&lt;p&gt;There is an &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;nightly&#x2F;cargo&#x2F;reference&#x2F;unstable.html#namespaced-features&quot;&gt;unstable feature&lt;&#x2F;a&gt; that changes this.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;div class=&quot;footnote-definition&quot; id=&quot;2&quot;&gt;&lt;sup class=&quot;footnote-definition-label&quot;&gt;2&lt;&#x2F;sup&gt;
+&lt;p&gt;This is only true for some kinds of errors, but enough of them for this to
+be a problem more often than not.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+</description>
+      </item>
+      <item>
+          <title>Announcing caniuse.rs</title>
+          <pubDate>Wed, 04 Mar 2020 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://blog.turbo.fish/announcing-caniuse-rs/</link>
+          <guid>https://blog.turbo.fish/announcing-caniuse-rs/</guid>
+          <description xml:base="https://blog.turbo.fish/announcing-caniuse-rs/">&lt;p&gt;Hello, dear reader! Today, I am excited to announce&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;caniuse-rs&quot;&gt;&lt;a href=&quot;https:&#x2F;&#x2F;caniuse.rs&quot;&gt;caniuse.rs&lt;&#x2F;a&gt;&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;img src=&quot;https:&#x2F;&#x2F;blog.turbo.fish&#x2F;announcing-caniuse-rs&#x2F;screenshot.png&quot; alt=&quot;screenshot of caniuse.rs&quot; &#x2F;&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;A website I created, which, in contrast to &lt;a href=&quot;https:&#x2F;&#x2F;turbo.fish&#x2F;&quot;&gt;turbo.fish&lt;&#x2F;a&gt;,
+has a practical use: It allows you to quickly find out which version of Rust
+stabilized a certain feature&lt;sup class=&quot;footnote-reference&quot;&gt;&lt;a href=&quot;#1&quot;&gt;1&lt;&#x2F;a&gt;&lt;&#x2F;sup&gt;. It&#x27;s like &lt;code&gt;site:blog.rust-lang.org&lt;&#x2F;code&gt; in your
+search engine, but better!&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;what-for&quot;&gt;What for?&lt;&#x2F;h2&gt;
+&lt;p&gt;You might never have asked yourself &quot;what version of Rust stabilized X&quot;. Then
+caniuse.rs is probably not going to be that useful for you. But I have been in
+that situation quite a few times, and I&#x27;m sure other have been too. To list a
+few (fictional) scenarios:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;You just noticed that a crate you are working on only uses &lt;code&gt;lazy_static!&lt;&#x2F;code&gt; in
+one place, for a thing that you think should really be a &lt;code&gt;const&lt;&#x2F;code&gt; instead.
+You&#x27;re wondering if the functions used to initialize that value are &lt;code&gt;const fn&lt;&#x2F;code&gt;
+by now.&lt;&#x2F;li&gt;
+&lt;li&gt;You see a crate use &lt;code&gt;Struct { redundant: redundant }&lt;&#x2F;code&gt; field initialization. It
+has a relatively old MSRV, but is it too old for field init shorthands?&lt;&#x2F;li&gt;
+&lt;li&gt;You remember reading an RFC about exhaustive integer pattern matching and are
+now wondering whether that &lt;code&gt;_ =&amp;gt; unreachable!()&lt;&#x2F;code&gt; arm can finally be removed
+from your &lt;code&gt;match&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
+&lt;li&gt;It is the year 2025. The last time you worked with Rust was in 2020. You
+wonder whether the never type (&lt;code&gt;!&lt;&#x2F;code&gt;) is stable by now.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h2 id=&quot;that-s-it&quot;&gt;That&#x27;s it!&lt;&#x2F;h2&gt;
+&lt;p&gt;I don&#x27;t think there&#x27;s a point in writing more about the site here when you can
+just go over there and try it out yourself.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;a href=&quot;https:&#x2F;&#x2F;caniuse.rs&#x2F;&quot;&gt;» caniuse.rs «&lt;&#x2F;a&gt;&lt;&#x2F;p&gt;
+&lt;div class=&quot;footnote-definition&quot; id=&quot;1&quot;&gt;&lt;sup class=&quot;footnote-definition-label&quot;&gt;1&lt;&#x2F;sup&gt;
+&lt;p&gt;With &quot;feature&quot;, I don&#x27;t mean just &lt;code&gt;#![feature(…)]&lt;&#x2F;code&gt; features. I also mean
+all the things that continually got added to &lt;code&gt;std&lt;&#x2F;code&gt;. Functions that were made
+&lt;code&gt;const&lt;&#x2F;code&gt;. Macros that used to only be callable with arguments that were changed
+to allow argument-less calls or vice versa. There&#x27;s even been a few
+language-level changes that were implemented without receiving a feature gate.&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+</description>
+      </item>
+      <item>
+          <title>Rust 2020: Generics &amp; Cargo Features</title>
+          <pubDate>Sat, 02 Nov 2019 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://blog.turbo.fish/rust-2020/</link>
+          <guid>https://blog.turbo.fish/rust-2020/</guid>
+          <description xml:base="https://blog.turbo.fish/rust-2020/">&lt;p&gt;This is my personal wishlist of things I&#x27;d like to see in 2020 relating to Rust.
+It only contains technical items, not because I disagree with the people who say
+we should prioritize some non-technical things, but because I feel like I don&#x27;t
+have much of value to add to that topic.&lt;sup class=&quot;footnote-reference&quot;&gt;&lt;a href=&quot;#1&quot;&gt;1&lt;&#x2F;a&gt;&lt;&#x2F;sup&gt;&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;generics&quot;&gt;Generics&lt;&#x2F;h2&gt;
+&lt;p&gt;My absolute top one wishlist feature: const generics. The language I&#x27;m most
+proficient in other than Rust is C++ and its equivalent feature (with the
+&lt;em&gt;beautiful&lt;&#x2F;em&gt; name of &#x27;non-type template parameters&#x27;) is one of the only things I
+miss in Rust from time to time. And while most of the things I&#x27;d like to do with
+it can be done using &lt;a href=&quot;https:&#x2F;&#x2F;crates.io&#x2F;crates&#x2F;typenum&quot;&gt;typenum&lt;&#x2F;a&gt;, it can result in quite long type
+names, which makes error messages including those types very hard to read.&lt;sup class=&quot;footnote-reference&quot;&gt;&lt;a href=&quot;#2&quot;&gt;2&lt;&#x2F;a&gt;&lt;&#x2F;sup&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;I&#x27;d also love to see &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;rust-lang&#x2F;rust&#x2F;issues&#x2F;44265&quot;&gt;GATs&lt;&#x2F;a&gt; coming to nightly next year. Since they are
+required for &lt;code&gt;async fn&lt;&#x2F;code&gt; in traits, I have my hopes up for this happening. Then
+again, &lt;code&gt;async fn&lt;&#x2F;code&gt; is a &lt;a href=&quot;https:&#x2F;&#x2F;smallcultfollowing.com&#x2F;babysteps&#x2F;blog&#x2F;2019&#x2F;10&#x2F;26&#x2F;async-fn-in-traits-are-hard&#x2F;&quot;&gt;really hard problem&lt;&#x2F;a&gt; even with GATs available,
+so they might not get prioritized until the path forward is clearer. Either way,
+I&#x27;d love to play around with them.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;cargo-features&quot;&gt;Cargo features&lt;&#x2F;h2&gt;
+&lt;p&gt;There&#x27;s a &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;rust-lang&#x2F;cargo&#x2F;issues&#x2F;1197&quot;&gt;few&lt;&#x2F;a&gt; &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;rust-lang&#x2F;cargo&#x2F;issues&#x2F;1796&quot;&gt;long-standing&lt;&#x2F;a&gt; &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;rust-lang&#x2F;cargo&#x2F;issues&#x2F;2589&quot;&gt;issues&lt;&#x2F;a&gt;
+&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;rust-lang&#x2F;cargo&#x2F;issues&#x2F;2911&quot;&gt;in&lt;&#x2F;a&gt; &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;rust-lang&#x2F;cargo&#x2F;issues&#x2F;5730&quot;&gt;cargo&lt;&#x2F;a&gt; that all relate to the idea of &lt;em&gt;one&lt;&#x2F;em&gt; feature-set
+per (transitive) dependency. On first thought, it seems reasonable to require
+tests to run with dependencies compiled with the same feature set that&#x27;s used
+when distributing your app or library as a release build. However, once you
+consider build scripts and &lt;code&gt;no_std&lt;&#x2F;code&gt;, this doesn&#x27;t work so well anymore.&lt;&#x2F;p&gt;
+&lt;p&gt;A prime example of this issue is serde_json, which has a hard dependency on
+std, purely because &lt;code&gt;dev-dependencies&lt;&#x2F;code&gt; and regular dependencies have their
+features unified (see &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;serde-rs&#x2F;json&#x2F;pull&#x2F;516&quot;&gt;serde&#x2F;json#516&lt;&#x2F;a&gt;). There&#x27;s of course a reason
+that these issues have been open for so long, and that is that it would require
+a big rewrite of some parts of cargo. I don&#x27;t know what needs to happen for this
+rewrite to start, but I&#x27;d love to see (some of) these issues finally being
+resolved in 2020.&lt;&#x2F;p&gt;
+&lt;p&gt;Another unfortunate thing about cargo features is that enabling a feature of an
+optional dependency also enables that dependency (&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;rust-lang&#x2F;cargo&#x2F;issues&#x2F;3494&quot;&gt;rust-lang&#x2F;cargo#3494&lt;&#x2F;a&gt;).
+AFAICT, solving this doesn&#x27;t require any big rewrites, just a consensus on which
+way to solve it.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;ide-experience&quot;&gt;IDE experience&lt;&#x2F;h2&gt;
+&lt;p&gt;This one didn&#x27;t make it into the title, but I&#x27;d nevertheless like to see the IDE
+experience improve further. RLS is already more useful than Microsoft&#x27;s C&#x2F;C++
+extension in Visual Studio Code, but some things seem like they are still
+somewhat far away from their possible best: edit-to-feedback time,
+autocompletion, and finding item definitions on mouseover are all things I&#x27;d
+like to see improved next year (and I think they will be).&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;conclusion&quot;&gt;Conclusion&lt;&#x2F;h2&gt;
+&lt;p&gt;Most people reading this will already have come across const generics, GATs as
+well as the cargo and RLS issues I wrote about. I didn&#x27;t write about new ideas
+I think should be tried out, because I think Rust doesn&#x27;t need these kinds of
+changes at the moment. I agree with the previous Rust 2020 blog posts that
+called for another year of maturity. Let&#x27;s leave the anonymous records; effects;
+linear, dependent and higher-kinded types and whatever else for later.&lt;&#x2F;p&gt;
+&lt;p&gt;Thanks for reading!&lt;&#x2F;p&gt;
+&lt;div class=&quot;footnote-definition&quot; id=&quot;1&quot;&gt;&lt;sup class=&quot;footnote-definition-label&quot;&gt;1&lt;&#x2F;sup&gt;
+&lt;p&gt;I very much sympathize with &lt;a href=&quot;https:&#x2F;&#x2F;xampprocky.github.io&#x2F;public&#x2F;blog&#x2F;rust-2021&#x2F;&quot;&gt;XAMPPRocky&#x27;s post about Rust in 2020&lt;&#x2F;a&gt;
+though&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+&lt;div class=&quot;footnote-definition&quot; id=&quot;2&quot;&gt;&lt;sup class=&quot;footnote-definition-label&quot;&gt;2&lt;&#x2F;sup&gt;
+&lt;p&gt;Try what happens when you uncomment the following line in &lt;a href=&quot;https:&#x2F;&#x2F;crates.io&#x2F;crates&#x2F;uom&quot;&gt;uom&lt;&#x2F;a&gt;&#x27;s
+examples: &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;iliekturtles&#x2F;uom&#x2F;blob&#x2F;4b338869556be39bac4c3320da0c3298975178fa&#x2F;examples&#x2F;si.rs#L16&quot;&gt;link&lt;&#x2F;a&gt;&lt;&#x2F;p&gt;
+&lt;&#x2F;div&gt;
+</description>
+      </item>
+    </channel>
+</rss>
